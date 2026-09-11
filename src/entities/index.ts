@@ -17,6 +17,7 @@ import { Banner } from './banner.entity';
 import { Comment } from './comment.entity';
 import { Favorite } from './favorite.entity';
 import { Download } from './download.entity';
+import { DownloadCode } from './download-code.entity';
 import { Report } from './report.entity';
 import { Punishment } from './punishment.entity';
 import { Advertisement } from './advertisement.entity';
@@ -51,6 +52,7 @@ export const entities = [
   Comment,
   Favorite,
   Download,
+  DownloadCode,
   Report,
   Punishment,
   Advertisement,
@@ -86,6 +88,7 @@ export {
   Comment,
   Favorite,
   Download,
+  DownloadCode,
   Report,
   Punishment,
   Advertisement,

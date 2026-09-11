@@ -135,11 +135,13 @@ export class DocumentController {
     @Query('id') id: unknown,
     @CurrentUser() user: JwtUser,
     @Ip() ip: string,
+    @Query('downcode') downcode?: string,
   ) {
     return this.service.downloadDocument(
       this.numArray(id)[0] || 0,
       this.userIdOf(user),
       ip || '',
+      downcode || '',
     );
   }
 

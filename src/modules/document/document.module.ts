@@ -12,6 +12,7 @@ import {
   AttachmentContent,
   User,
   Download,
+  DownloadCode,
   Group,
   UserGroup,
 } from '../../entities';
@@ -32,6 +33,7 @@ import { DocumentController } from './document.controller';
       AttachmentContent,
       User,
       Download,
+      DownloadCode,
       Group,
       UserGroup,
     ]),

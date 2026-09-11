@@ -83,6 +83,7 @@ export class ConfigController {
     const security = byCategory('security');
     const display = byCategory('display');
     const score = byCategory('score');
+    const download = byCategory('download');
 
     const str = (map: Record<string, string>, key: string) => map[key] ?? '';
     const bool = (map: Record<string, string>, key: string, def = false) => {
@@ -164,6 +165,16 @@ export class ConfigController {
         contact_link: str(display, 'contact_link'),
         index_document_style: str(display, 'index_document_style'),
         home_version: str(display, 'home_version'),
+      },
+      download: {
+        enable_guest_download: bool(download, 'enable_guest_download'),
+        enable_code_download: bool(download, 'enable_code_download'),
+        max_price: int(download, 'max_price'),
+        code_tip: str(download, 'code_tip'),
+        times_every_day: int(download, 'times_every_day'),
+        times_every_ip: int(download, 'times_every_ip'),
+        free_download_duration: int(download, 'free_download_duration'),
+        url_duration: int(download, 'url_duration'),
       },
       language: langs,
     };

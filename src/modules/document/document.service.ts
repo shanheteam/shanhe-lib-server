@@ -17,6 +17,7 @@ import {
   AttachmentContent,
   User,
   Download,
+  DownloadCode,
   Group,
   UserGroup,
 } from '../../entities';
@@ -108,6 +109,8 @@ export class DocumentService implements OnModuleInit {
     private readonly userRepo: Repository<User>,
     @InjectRepository(Download)
     private readonly downloadRepo: Repository<Download>,
+    @InjectRepository(DownloadCode)
+    private readonly downloadCodeRepo: Repository<DownloadCode>,
     @InjectRepository(Group)
     private readonly groupRepo: Repository<Group>,
     @InjectRepository(UserGroup)
@@ -854,7 +857,7 @@ export class DocumentService implements OnModuleInit {
 
   // ================== 下载 ==================
 
-  async downloadDocument(id: number, userId: number, ip: string): Promise<Record<string, any>> {
+  async downloadDocument(id: number, userId: number, ip: string, downcode = ''): Promise<Record<string, any>> {
     const cfgGuest = this.config.getBool('download', 'enable_guest_download', false);
     if (userId <= 0 && !cfgGuest) {
       throw Biz.unauthenticated('您未登录或您的登录已过期，请重新登录或刷新页面重试');
@@ -889,20 +892,31 @@ export class DocumentService implements OnModuleInit {
     } as any);
     if (!attachment) throw Biz.notFound('附件不存在');
 
-    if (Number(doc.user_id) !== userId) {
-      const user = await this.userRepo.findOne({ where: { id: userId } });
-      const credit = Number(user?.credit_count) || 0;
-      if (credit < Number(doc.price)) {
-        throw Biz.permissionDenied(`${this.config.get('score', 'credit_name', '魔豆')}不足，无法下载`);
+    const creditName = this.config.get('score', 'credit_name', '魔豆');
+    const price = Number(doc.price);
+    const isOwner = Number(doc.user_id) === userId;
+    let isPay = price > 0 && !isOwner;
+
+    if (!isOwner) {
+      if (await this.isOwnedDocument(userId, id)) {
+        isPay = false;
+      } else if (downcode) {
+        await this.consumeDownloadCode(downcode, userId, price);
+      } else if (price > 0) {
+        const user = await this.userRepo.findOne({ where: { id: userId } });
+        const credit = Number(user?.credit_count) || 0;
+        if (credit < price) {
+          throw Biz.permissionDenied(`${creditName}不足，无法下载`);
+        }
+        await this.userRepo.decrement({ id: userId }, 'credit_count', price);
       }
     }
 
-    const free = Number(doc.user_id) === userId;
     const down = this.downloadRepo.create({
       user_id: userId,
       document_id: id,
       ip,
-      is_pay: !free,
+      is_pay: isPay,
       created_at: new Date(),
       updated_at: new Date(),
     });
@@ -910,6 +924,46 @@ export class DocumentService implements OnModuleInit {
     await this.docRepo.increment({ id }, 'download_count', 1);
 
     return { url: this.generateDownloadURL(doc, attachment.hash, id, userId) };
+  }
+
+  private async isOwnedDocument(userId: number, documentId: number): Promise<boolean> {
+    if (userId <= 0) return false;
+    const duration = this.config.getInt('download', 'free_download_duration', 0);
+    if (duration <= 0) return false;
+    const since = new Date();
+    since.setDate(since.getDate() - duration);
+    const paid = await this.downloadRepo.findOne({
+      where: { user_id: userId, document_id: documentId, is_pay: true, created_at: MoreThanOrEqual(since) },
+      order: { id: 'DESC' },
+    });
+    return !!paid;
+  }
+
+  private async consumeDownloadCode(code: string, userId: number, price: number): Promise<void> {
+    if (!this.config.getBool('download', 'enable_code_download', false)) {
+      throw Biz.permissionDenied('下载码下载功能未启用');
+    }
+    const maxPrice = this.config.getInt('download', 'max_price', 0);
+    if (price > maxPrice) {
+      const creditName = this.config.get('score', 'credit_name', '魔豆');
+      throw Biz.permissionDenied(`下载码只能免费下载价格不超过${maxPrice}${creditName}的文档`);
+    }
+    const normalized = String(code).trim();
+    if (!normalized) throw Biz.invalidArgument('请输入您的下载码');
+
+    const result = await this.downloadCodeRepo
+      .createQueryBuilder()
+      .update(DownloadCode)
+      .set({ status: 1, user_id: userId, used_at: new Date(), updated_at: new Date() })
+      .where('code = :code AND status = 0', { code: normalized })
+      .execute();
+    const affected = result.affected || 0;
+
+    if (affected === 0) {
+      const item = await this.downloadCodeRepo.findOne({ where: { code: normalized } });
+      if (!item) throw Biz.notFound('下载码不存在');
+      throw Biz.permissionDenied('下载码已使用');
+    }
   }
 
   async downloadDocumentToBeReviewed(id: number, userId: number, ip: string): Promise<Record<string, any>> {
