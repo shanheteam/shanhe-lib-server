@@ -1,0 +1,44 @@
+import { NestFactory } from '@nestjs/core';
+import { NestExpressApplication } from '@nestjs/platform-express';
+import * as path from 'path';
+import * as fs from 'fs';
+import { AppModule } from './app.module';
+import { AllExceptionsFilter } from './common/all-exceptions.filter';
+import { HttpStatusInterceptor } from './common/http-status.interceptor';
+import { env } from './config/env';
+
+async function bootstrap() {
+  const app = await NestFactory.create<NestExpressApplication>(AppModule);
+
+  app.setGlobalPrefix('api/v1', {
+    exclude: [
+      '/favicon.ico',
+      '/view/page/:hash/:page',
+      '/view/cover/:hash',
+      '/download/:jwt',
+    ],
+  });
+  app.useGlobalFilters(new AllExceptionsFilter());
+  app.useGlobalInterceptors(new HttpStatusInterceptor());
+
+  const origin = env.corsOrigin
+    ? env.corsOrigin.split(',').map((s) => s.trim())
+    : true;
+  app.enableCors({
+    origin,
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+  });
+
+  // 静态资源目录（上传的图片等），运行时自动创建
+  const uploadsDir = path.resolve(process.cwd(), env.uploadDir);
+  const documentsDir = path.resolve(process.cwd(), env.documentDir);
+  fs.mkdirSync(uploadsDir, { recursive: true });
+  fs.mkdirSync(documentsDir, { recursive: true });
+
+  await app.listen(env.port);
+  console.log(`[moredoc-server] listening on http://localhost:${env.port}`);
+}
+
+bootstrap();

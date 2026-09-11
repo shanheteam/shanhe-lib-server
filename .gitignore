@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.env
+uploads/
+documents/
+sitemap/
+cache/
+logs/
+*.log
+.DS_Store
