@@ -598,17 +598,25 @@ export class ConfigController {
 
   private getDisk(): Array<Record<string, unknown>> {
     try {
-      const out = execSync('df -k', { encoding: 'utf8' });
+      // 使用 -P 强制 POSIX 输出（6 列），避免 macOS 默认多列格式导致挂载点解析错位
+      const out = execSync('df -kP', { encoding: 'utf8' });
       const lines = out.trim().split('\n').slice(1);
       const disks: Array<Record<string, unknown>> = [];
+      const seenTotals = new Set<number>();
       for (const line of lines) {
         const parts = line.trim().split(/\s+/);
         if (parts.length < 6) continue;
+        const filesystem = parts[0];
+        // 仅保留真实块设备（/dev/xxx），过滤 devfs、tmpfs、map、proc、sysfs 等虚拟/内存文件系统
+        if (!filesystem.startsWith('/dev/')) continue;
         const total = parseInt(parts[1], 10);
         const used = parseInt(parts[2], 10);
         const free = parseInt(parts[3], 10);
         const percent = parseFloat(parts[4]);
-        if (Number.isNaN(total)) continue;
+        if (Number.isNaN(total) || total <= 0) continue;
+        // macOS APFS 会把同一物理磁盘挂载为多个卷（total 一致），按容量去重，避免重复展示
+        if (seenTotals.has(total)) continue;
+        seenTotals.add(total);
         disks.push({
           disk_name: parts.slice(5).join(' '),
           total: total * 1024,
