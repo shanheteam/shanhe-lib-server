@@ -13,10 +13,14 @@ import { RequireLogin } from '../../common/decorators/require-login.decorator';
 import { RequirePermission } from '../../common/decorators/permission.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { JwtUser } from '../../auth/jwt-user.type';
+import { SpiderCrawlerService } from '../spider/spider-crawler.service';
 
 @Controller('article')
 export class ArticleController {
-  constructor(private readonly service: ArticleService) {}
+  constructor(
+    private readonly service: ArticleService,
+    private readonly crawler: SpiderCrawlerService,
+  ) {}
 
   @RequireLogin()
   @Post()
@@ -110,5 +114,12 @@ export class ArticleController {
   @Get('related')
   related(@Query() query: Record<string, any>) {
     return this.service.getRelated(query);
+  }
+
+  /** 通用网页文章抓取，供文章采集页「采集文章」按钮调用 */
+  @RequirePermission('/api.v1.ArticleAPI/CrawlArticle')
+  @Post('crawl')
+  crawl(@Body() body: Record<string, any>) {
+    return this.crawler.crawlArticle(body);
   }
 }

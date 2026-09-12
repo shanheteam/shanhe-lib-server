@@ -30,6 +30,13 @@ import { Config } from './config.entity';
 import { Sign } from './sign.entity';
 import { EmailCode } from './email-code.entity';
 import { Logout } from './logout.entity';
+import { SpiderUrl } from './spider-url.entity';
+import { SpiderArticleList } from './spider-article-list.entity';
+import { SpiderArticleDetail } from './spider-article-detail.entity';
+import { SpiderDocument } from './spider-document.entity';
+import { Order } from './order.entity';
+import { Sms } from './sms.entity';
+import { UserVip } from './user-vip.entity';
 
 export const entities = [
   User,
@@ -65,6 +72,13 @@ export const entities = [
   Sign,
   EmailCode,
   Logout,
+  SpiderUrl,
+  SpiderArticleList,
+  SpiderArticleDetail,
+  SpiderDocument,
+  Order,
+  Sms,
+  UserVip,
 ];
 
 export {
@@ -101,4 +115,11 @@ export {
   Sign,
   EmailCode,
   Logout,
+  SpiderUrl,
+  SpiderArticleList,
+  SpiderArticleDetail,
+  SpiderDocument,
+  Order,
+  Sms,
+  UserVip,
 };

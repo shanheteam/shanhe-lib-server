@@ -1,16 +1,15 @@
 import { Column, Entity, Index, PrimaryGeneratedColumn } from 'typeorm';
 
 @Entity('permission')
+@Index('method_path', ['method', 'path'], { unique: true })
+@Index('idx_method', ['method'])
 export class Permission {
   @PrimaryGeneratedColumn({ type: 'bigint' })
   id: number;
 
-  @Index('method_path', { unique: true })
-  @Index('idx_method')
   @Column({ type: 'varchar', length: 16 })
   method: string;
 
-  @Index('method_path', { unique: true })
   @Column({ type: 'varchar', length: 128 })
   path: string;
 

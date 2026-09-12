@@ -27,6 +27,11 @@ import { SearchRecordModule } from './modules/searchrecord/searchrecord.module';
 import { DownloadModule } from './modules/download/download.module';
 import { DynamicModule } from './modules/dynamic/dynamic.module';
 import { SearchModule } from './modules/search/search.module';
+import { SpiderModule } from './modules/spider/spider.module';
+import { OrderModule } from './modules/order/order.module';
+import { SmsModule } from './modules/sms/sms.module';
+import { UserVipModule } from './modules/uservip/uservip.module';
+import { PayConfigModule } from './modules/payconfig/payconfig.module';
 
 @Module({
   imports: [
@@ -57,6 +62,11 @@ import { SearchModule } from './modules/search/search.module';
     DownloadModule,
     DynamicModule,
     SearchModule,
+    SpiderModule,
+    OrderModule,
+    SmsModule,
+    UserVipModule,
+    PayConfigModule,
   ],
 })
 export class AppModule {}

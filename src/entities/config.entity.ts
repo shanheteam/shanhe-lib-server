@@ -1,6 +1,8 @@
 import { Column, Entity, Index, PrimaryGeneratedColumn } from 'typeorm';
 
 @Entity('config')
+@Index('name_category', ['name', 'category'], { unique: true })
+@Index('category', ['category'])
 export class Config {
   @PrimaryGeneratedColumn({ type: 'bigint' })
   id: number;
@@ -8,7 +10,6 @@ export class Config {
   @Column({ type: 'varchar', length: 64, default: '' })
   label: string;
 
-  @Index('name_category', { unique: true })
   @Column({ type: 'varchar', length: 64 })
   name: string;
 
@@ -21,8 +22,6 @@ export class Config {
   @Column({ type: 'varchar', length: 32, default: 'text' })
   input_type: string;
 
-  @Index('name_category', { unique: true })
-  @Index('category')
   @Column({ type: 'varchar', length: 32, default: '' })
   category: string;
 

@@ -14,6 +14,7 @@ export const PERMISSIONS_SEED: PermissionSeed[] = [
   { title: '查看广告列表', description: '查看广告列表', method: 'GRPC', path: '/api.v1.AdvertisementAPI/ListAdvertisement' },
   { title: '更新广告', description: '修改广告内容', method: 'GRPC', path: '/api.v1.AdvertisementAPI/UpdateAdvertisement' },
   { title: '批量审核文章', description: '批量审核文章状态', method: 'GRPC', path: '/api.v1.ArticleAPI/CheckArticles' },
+  { title: '抓取网页文章', description: '根据链接抓取并解析文章标题与正文', method: 'GRPC', path: '/api.v1.ArticleAPI/CrawlArticle' },
   { title: '创建文章', description: '在后台新增文章或单页', method: 'GRPC', path: '/api.v1.ArticleAPI/CreateArticle' },
   { title: '删除文章', description: '删除指定文章', method: 'GRPC', path: '/api.v1.ArticleAPI/DeleteArticle' },
   { title: '删除回收站文章', description: '彻底删除回收站中的文章', method: 'GRPC', path: '/api.v1.ArticleAPI/DeleteRecycleArticle' },
@@ -78,6 +79,11 @@ export const PERMISSIONS_SEED: PermissionSeed[] = [
   { title: '删除导航', description: '删除指定导航项', method: 'GRPC', path: '/api.v1.NavigationAPI/DeleteNavigation' },
   { title: '查看导航列表', description: '查看导航列表', method: 'GRPC', path: '/api.v1.NavigationAPI/ListNavigation' },
   { title: '更新导航', description: '修改导航信息', method: 'GRPC', path: '/api.v1.NavigationAPI/UpdateNavigation' },
+  { title: '关闭订单', description: '关闭待支付的订单', method: 'GRPC', path: '/api.v1.OrderAPI/CloseOrder' },
+  { title: '删除订单', description: '删除指定订单', method: 'GRPC', path: '/api.v1.OrderAPI/DeleteOrder' },
+  { title: '查看订单详情', description: '根据订单 ID 查看详情', method: 'GRPC', path: '/api.v1.OrderAPI/GetOrder' },
+  { title: '查看订单列表', description: '查看系统订单列表', method: 'GRPC', path: '/api.v1.OrderAPI/ListOrder' },
+  { title: '系统充值', description: '后台为用户充值或扣减积分', method: 'GRPC', path: '/api.v1.OrderAPI/SystemRecharge' },
   { title: '查看权限详情', description: '根据权限 ID 查看详情', method: 'GRPC', path: '/api.v1.PermissionAPI/GetPermission' },
   { title: '查看权限列表', description: '查看系统权限列表', method: 'GRPC', path: '/api.v1.PermissionAPI/ListPermission' },
   { title: '更新权限信息', description: '修改权限名称或说明', method: 'GRPC', path: '/api.v1.PermissionAPI/UpdatePermission' },
@@ -95,12 +101,40 @@ export const PERMISSIONS_SEED: PermissionSeed[] = [
   { title: '处理举报', description: '更新举报处理结果', method: 'GRPC', path: '/api.v1.ReportAPI/UpdateReport' },
   { title: '删除搜索记录', description: '删除指定搜索记录', method: 'GRPC', path: '/api.v1.SearchRecordAPI/DeleteSearchRecord' },
   { title: '查看搜索记录列表', description: '查看站内搜索记录列表', method: 'GRPC', path: '/api.v1.SearchRecordAPI/ListSearchRecord' },
+  { title: '删除短信', description: '删除指定短信记录', method: 'GRPC', path: '/api.v1.SmsAPI/DeleteSms' },
+  { title: '查看短信详情', description: '根据短信 ID 查看详情', method: 'GRPC', path: '/api.v1.SmsAPI/GetSms' },
+  { title: '查看短信列表', description: '查看短信发送记录列表', method: 'GRPC', path: '/api.v1.SmsAPI/ListSms' },
+  { title: '批量更新采集文章', description: '批量更新采集文章状态与内容（入采集/发布队列）', method: 'GRPC', path: '/api.v1.SpiderAPI/BatchUpdateSpiderArticleDetail' },
+  { title: '批量更新采集文档', description: '批量更新采集文档字段与状态（入下载/发布队列）', method: 'GRPC', path: '/api.v1.SpiderAPI/BatchUpdateSpiderDocument' },
+  { title: '创建文章嗅探来源', description: '新增文章列表页嗅探来源', method: 'GRPC', path: '/api.v1.SpiderAPI/CreateSpiderArticleList' },
+  { title: '创建文档嗅探链接', description: '新增文档采集种子链接', method: 'GRPC', path: '/api.v1.SpiderAPI/CreateSpiderUrl' },
+  { title: '删除采集文章', description: '删除指定采集文章', method: 'GRPC', path: '/api.v1.SpiderAPI/DeleteSpiderArticleDetail' },
+  { title: '删除文章嗅探来源', description: '删除文章列表页嗅探来源', method: 'GRPC', path: '/api.v1.SpiderAPI/DeleteSpiderArticleList' },
+  { title: '删除采集文档', description: '删除指定采集文档', method: 'GRPC', path: '/api.v1.SpiderAPI/DeleteSpiderDocument' },
+  { title: '删除文档嗅探链接', description: '删除文档采集种子链接', method: 'GRPC', path: '/api.v1.SpiderAPI/DeleteSpiderUrl' },
+  { title: '查看采集文章详情', description: '根据 ID 查看采集文章详情', method: 'GRPC', path: '/api.v1.SpiderAPI/GetSpiderArticleDetail' },
+  { title: '查看文章嗅探来源详情', description: '根据 ID 查看文章列表页来源', method: 'GRPC', path: '/api.v1.SpiderAPI/GetSpiderArticleList' },
+  { title: '查看采集文档详情', description: '根据 ID 查看采集文档详情', method: 'GRPC', path: '/api.v1.SpiderAPI/GetSpiderDocument' },
+  { title: '查看文档嗅探链接详情', description: '根据 ID 查看文档采集链接', method: 'GRPC', path: '/api.v1.SpiderAPI/GetSpiderUrl' },
+  { title: '查看采集文章列表', description: '查看采集文章记录列表', method: 'GRPC', path: '/api.v1.SpiderAPI/ListSpiderArticleDetail' },
+  { title: '查看文章嗅探来源列表', description: '查看文章列表页来源列表', method: 'GRPC', path: '/api.v1.SpiderAPI/ListSpiderArticleList' },
+  { title: '查看采集文档列表', description: '查看采集文档记录列表', method: 'GRPC', path: '/api.v1.SpiderAPI/ListSpiderDocument' },
+  { title: '查看文档嗅探链接列表', description: '查看文档采集链接列表', method: 'GRPC', path: '/api.v1.SpiderAPI/ListSpiderUrl' },
+  { title: '更新采集文章', description: '修改采集文章内容与状态', method: 'GRPC', path: '/api.v1.SpiderAPI/UpdateSpiderArticleDetail' },
+  { title: '更新文章嗅探来源', description: '修改文章列表页嗅探来源', method: 'GRPC', path: '/api.v1.SpiderAPI/UpdateSpiderArticleList' },
+  { title: '更新文章嗅探来源状态', description: '批量设置文章列表页嗅探状态', method: 'GRPC', path: '/api.v1.SpiderAPI/UpdateSpiderArticleListStatus' },
+  { title: '更新采集文档', description: '修改采集文档字段与状态', method: 'GRPC', path: '/api.v1.SpiderAPI/UpdateSpiderDocument' },
+  { title: '更新文档嗅探链接', description: '修改文档采集链接', method: 'GRPC', path: '/api.v1.SpiderAPI/UpdateSpiderUrl' },
+  { title: '更新文档嗅探链接状态', description: '批量设置文档采集链接嗅探状态', method: 'GRPC', path: '/api.v1.SpiderAPI/UpdateSpiderUrlStatus' },
   { title: '创建用户', description: '新增系统用户', method: 'GRPC', path: '/api.v1.UserAPI/AddUser' },
   { title: '删除用户', description: '删除指定用户', method: 'GRPC', path: '/api.v1.UserAPI/DeleteUser' },
   { title: '查看用户详情', description: '根据用户 ID 查看详情', method: 'GRPC', path: '/api.v1.UserAPI/GetUser' },
   { title: '查看用户列表', description: '查看系统中的用户列表', method: 'GRPC', path: '/api.v1.UserAPI/ListUser' },
   { title: '设置用户密码与分组', description: '设置用户密码并调整所属分组', method: 'GRPC', path: '/api.v1.UserAPI/SetUser' },
   { title: '更新用户资料', description: '修改用户基础资料', method: 'GRPC', path: '/api.v1.UserAPI/UpdateUserProfile' },
+  { title: '删除用户会员记录', description: '删除指定用户 VIP 记录', method: 'GRPC', path: '/api.v1.UserVipAPI/DeleteUserVip' },
+  { title: '查看用户会员列表', description: '查看用户 VIP 会员记录列表', method: 'GRPC', path: '/api.v1.UserVipAPI/ListUserVip' },
+  { title: '更新用户会员记录', description: '修改用户 VIP 权益与有效期', method: 'GRPC', path: '/api.v1.UserVipAPI/UpdateUserVip' },
   { title: '上传文章素材', description: '上传文章使用的图片、音频或视频', method: 'POST', path: '/api/v1/upload/article' },
   { title: '上传头像', description: '上传用户头像图片', method: 'POST', path: '/api/v1/upload/avatar' },
   { title: '上传轮播图素材', description: '上传轮播图图片文件', method: 'POST', path: '/api/v1/upload/banner' },
@@ -122,6 +156,31 @@ export interface ConfigSeed {
 }
 
 const closeStatement = `<div>尊敬的用户，您好：</div><div>为了给您带来更好的使用体验，<strong>魔豆文库</strong> 正在对服务进行升级维护，预计恢复时间为 <span style="color:red">2024-10-24 06:00:00</span>，请您稍后再进行访问。</div><div>升级维护期间，普通用户将无法正常使用（系统管理人员出于维护的需要不受升级影响）。</div><div>由此带来的不便，敬请谅解。</div>`;
+
+interface OAuthSeedOptions {
+  clientIdLabel?: string;
+  clientIdPlaceholder?: string;
+  extra?: Array<Omit<ConfigSeed, 'category'>>;
+}
+
+/** 生成一套标准第三方登录（OAuth）配置项 */
+function oauthConfigSeed(
+  category: string,
+  title: string,
+  devUrl: string,
+  opts: OAuthSeedOptions = {},
+): ConfigSeed[] {
+  const type = category.replace(/^oauth/, '').toLowerCase();
+  const seeds: ConfigSeed[] = [
+    { category, name: 'enable', col_num: 8, label: '是否启用', value: 'false', placeholder: `启用后登录页显示「使用${title}登录」入口`, input_type: 'switch', sort: 10 },
+    { category, name: 'client_id', col_num: 12, label: opts.clientIdLabel ?? 'Client ID', value: '', placeholder: opts.clientIdPlaceholder ?? `在${title}开放平台创建应用后获得`, input_type: 'text', sort: 20 },
+    { category, name: 'client_secret', col_num: 12, label: 'Client Secret', value: '', input_type: 'text', sort: 30, is_secret: true },
+    { category, name: 'redirect_url', col_num: 24, label: '授权回调地址', value: '', placeholder: `请将该地址填入${title}开放平台的授权回调域：/oauth/callback?type=${type}`, input_type: 'text', sort: 40 },
+  ];
+  if (devUrl) seeds.push({ category, name: 'dev_url', col_num: 24, label: '开放平台地址', value: devUrl, input_type: 'text', sort: 50 });
+  for (const extra of opts.extra ?? []) seeds.push({ ...extra, category });
+  return seeds;
+}
 
 export const CONFIG_SEED: ConfigSeed[] = [
   { category: 'system', name: 'sitename', col_num: 24, label: '网站名称', value: '魔豆文库', placeholder: '请输入您网站的名称，如：魔豆文库', input_type: 'text', sort: 10 },
@@ -228,6 +287,154 @@ export const CONFIG_SEED: ConfigSeed[] = [
   { category: 'release', name: 'name', label: '版本发布名称', value: '', input_type: 'text', sort: 30 },
   { category: 'release', name: 'body', label: '版本发布说明', value: '', input_type: 'textarea', sort: 40 },
   { category: 'release', name: 'ignore', label: '忽略版本提示', value: '', input_type: 'text', sort: 50 },
+
+  // 存储：阿里云 OSS。启用后通用附件（图片/头像/文章资源）上传到 OSS，文档原文件仍存本地用于预览转换
+  { category: 'storage', name: 'enable_oss', col_num: 8, label: '是否启用 OSS', value: 'false', placeholder: '启用后图片/头像等附件将上传到阿里云 OSS', input_type: 'switch', sort: 10 },
+  { category: 'storage', name: 'oss_region', col_num: 8, label: 'OSS 区域', value: '', placeholder: '如 oss-cn-hangzhou', input_type: 'text', sort: 20 },
+  { category: 'storage', name: 'oss_bucket', col_num: 8, label: 'Bucket 名称', value: '', placeholder: 'OSS 存储桶名称', input_type: 'text', sort: 30 },
+  { category: 'storage', name: 'oss_access_key_id', col_num: 12, label: 'AccessKey ID', value: '', placeholder: '阿里云 AccessKey ID', input_type: 'text', sort: 40, is_secret: true },
+  { category: 'storage', name: 'oss_access_key_secret', col_num: 12, label: 'AccessKey Secret', value: '', placeholder: '阿里云 AccessKey Secret', input_type: 'text', sort: 41, is_secret: true },
+  { category: 'storage', name: 'oss_domain', col_num: 16, label: '自定义访问域名', value: '', placeholder: '可选，绑定到 OSS 的 CDN/自定义域名，留空则用 {bucket}.{region}.aliyuncs.com', input_type: 'text', sort: 50 },
+
+  // ===== 专业版配置（对应 moredoc-web-pro 后台） =====
+  // 系统：短信登录入口开关
+  { category: 'system', name: 'enable_sms', col_num: 8, label: '是否启用短信服务', value: 'false', placeholder: '启用后，登录/注册/找回密码页显示手机短信验证入口', input_type: 'switch', sort: 100 },
+  // 安全：小程序扫码登录、待支付订单超时
+  { category: 'security', name: 'enable_wechatmp_pc_login', col_num: 12, label: 'PC端微信小程序扫码登录', value: 'false', placeholder: '启用后 PC 登录页显示微信小程序扫码登录入口', input_type: 'switch', sort: 60 },
+  { category: 'security', name: 'order_close_minutes', col_num: 12, label: '待支付订单超时关闭(分钟)', value: '30', placeholder: '待支付订单超过该时长自动关闭，默认30分钟', input_type: 'number', sort: 61 },
+  // 积分：人民币兑积分比率
+  { category: 'score', name: 'credit_exchange', col_num: 8, label: '人民币兑积分比率', value: '10', placeholder: '1元人民币可兑换的积分数量，如10表示1元=10积分', input_type: 'number', sort: 90 },
+
+  // VIP 会员
+  { category: 'vip', name: 'enable', col_num: 8, label: '是否启用VIP', value: 'false', input_type: 'switch', sort: 10 },
+  { category: 'vip', name: 'icon', col_num: 8, label: 'VIP图标', value: '', placeholder: '用户头像上的VIP标识图标', input_type: 'image', sort: 20 },
+  { category: 'vip', name: 'enable_credit_pay', col_num: 8, label: '是否允许积分购买VIP', value: 'false', input_type: 'switch', sort: 30 },
+  { category: 'vip', name: 'year_price', col_num: 8, label: '年卡价格(分)', value: '0', placeholder: '单位：分，如19900表示199元', input_type: 'number', sort: 100 },
+  { category: 'vip', name: 'year_original_price', col_num: 8, label: '年卡原价(分)', value: '0', input_type: 'number', sort: 101 },
+  { category: 'vip', name: 'year_document_discount', col_num: 8, label: '年卡文档折扣(十分之一折)', value: '100', placeholder: '如90表示9折，100表示不打折', input_type: 'number', sort: 102 },
+  { category: 'vip', name: 'year_download', col_num: 8, label: '年卡专享下载次数', value: '0', placeholder: '年卡周期内VIP文档免费下载总次数，0表示不限', input_type: 'number', sort: 103 },
+  { category: 'vip', name: 'year_times_every_day', col_num: 8, label: '年卡每日下载次数', value: '0', placeholder: '0表示不限', input_type: 'number', sort: 104 },
+  { category: 'vip', name: 'quarter_price', col_num: 8, label: '季卡价格(分)', value: '0', input_type: 'number', sort: 200 },
+  { category: 'vip', name: 'quarter_original_price', col_num: 8, label: '季卡原价(分)', value: '0', input_type: 'number', sort: 201 },
+  { category: 'vip', name: 'quarter_document_discount', col_num: 8, label: '季卡文档折扣', value: '100', input_type: 'number', sort: 202 },
+  { category: 'vip', name: 'quarter_download', col_num: 8, label: '季卡专享下载次数', value: '0', input_type: 'number', sort: 203 },
+  { category: 'vip', name: 'quarter_times_every_day', col_num: 8, label: '季卡每日下载次数', value: '0', input_type: 'number', sort: 204 },
+  { category: 'vip', name: 'month_price', col_num: 8, label: '月卡价格(分)', value: '0', input_type: 'number', sort: 300 },
+  { category: 'vip', name: 'month_original_price', col_num: 8, label: '月卡原价(分)', value: '0', input_type: 'number', sort: 301 },
+  { category: 'vip', name: 'month_document_discount', col_num: 8, label: '月卡文档折扣', value: '100', input_type: 'number', sort: 302 },
+  { category: 'vip', name: 'month_download', col_num: 8, label: '月卡专享下载次数', value: '0', input_type: 'number', sort: 303 },
+  { category: 'vip', name: 'month_times_every_day', col_num: 8, label: '月卡每日下载次数', value: '0', input_type: 'number', sort: 304 },
+
+  // 微信小程序
+  { category: 'mp', name: 'enable', col_num: 8, label: '是否启用小程序', value: 'false', input_type: 'switch', sort: 10 },
+  { category: 'mp', name: 'appid', col_num: 12, label: '小程序AppID', value: '', input_type: 'text', sort: 20 },
+  { category: 'mp', name: 'appsecret', col_num: 12, label: '小程序AppSecret', value: '', input_type: 'text', sort: 30, is_secret: true },
+  { category: 'mp', name: 'token', col_num: 12, label: '消息校验Token', value: '', input_type: 'text', sort: 40 },
+  { category: 'mp', name: 'encoding_aes_key', col_num: 12, label: '消息加解密密钥', value: '', input_type: 'text', sort: 50, is_secret: true },
+
+  // 全文搜索
+  { category: 'fulltext_search', name: 'enable', col_num: 8, label: '是否启用全文搜索', value: 'false', input_type: 'switch', sort: 10 },
+  { category: 'fulltext_search', name: 'engine', col_num: 8, label: '搜索引擎', value: 'mysql', input_type: 'select', sort: 20, options: 'mysql:MySQL FULLTEXT\nelasticsearch:Elasticsearch\nmeilisearch:MeiliSearch' },
+  { category: 'fulltext_search', name: 'host', col_num: 8, label: '搜索引擎地址', value: '127.0.0.1', placeholder: '如 127.0.0.1', input_type: 'text', sort: 30 },
+  { category: 'fulltext_search', name: 'port', col_num: 8, label: '端口', value: '9200', input_type: 'number', sort: 40 },
+  { category: 'fulltext_search', name: 'index', col_num: 8, label: '索引名', value: 'moredoc', input_type: 'text', sort: 50 },
+  { category: 'fulltext_search', name: 'username', col_num: 8, label: '用户名', value: '', input_type: 'text', sort: 60 },
+  { category: 'fulltext_search', name: 'password', col_num: 8, label: '密码', value: '', input_type: 'text', sort: 70, is_secret: true },
+  { category: 'fulltext_search', name: 'api_key', col_num: 24, label: 'API Key', value: '', placeholder: 'MeiliSearch 等使用 API Key 的引擎填写', input_type: 'text', sort: 80, is_secret: true },
+
+  // 采集
+  { category: 'spider', name: 'enable', col_num: 8, label: '是否启用自动采集', value: 'false', placeholder: '关闭后采集任务不再被后台自动调度，仍可手动入队', input_type: 'switch', sort: 10 },
+  { category: 'spider', name: 'concurrency', col_num: 8, label: '并发任务数', value: '3', input_type: 'number', sort: 20 },
+  { category: 'spider', name: 'timeout', col_num: 8, label: '请求超时(秒)', value: '15', input_type: 'number', sort: 30 },
+  { category: 'spider', name: 'interval', col_num: 8, label: '调度间隔(分钟)', value: '5', placeholder: '后台每隔多少分钟扫描一次待采集队列', input_type: 'number', sort: 40 },
+  { category: 'spider', name: 'user_agent', col_num: 24, label: 'User-Agent', value: 'Mozilla/5.0 (compatible; moredoc-spider)', input_type: 'text', sort: 50 },
+  { category: 'spider', name: 'proxy', col_num: 24, label: '代理地址', value: '', placeholder: '如 http://127.0.0.1:7890，留空不使用代理', input_type: 'text', sort: 60 },
+  { category: 'spider', name: 'render_service', col_num: 24, label: '浏览器渲染服务地址', value: '', placeholder: 'enable_browser=true 的任务使用该渲染服务（返回渲染后HTML），留空则退化为普通请求', input_type: 'text', sort: 70 },
+
+  // 微信支付
+  { category: 'wechatpay', name: 'enable_wechatpay', col_num: 8, label: '是否启用微信支付', value: 'false', input_type: 'switch', sort: 10 },
+  { category: 'wechatpay', name: 'appid', col_num: 12, label: 'AppID', value: '', placeholder: '公众号/小程序/移动应用 AppID', input_type: 'text', sort: 20 },
+  { category: 'wechatpay', name: 'mchid', col_num: 12, label: '微信支付商户号', value: '', input_type: 'text', sort: 30 },
+  { category: 'wechatpay', name: 'serial_no', col_num: 12, label: '商户证书序列号', value: '', input_type: 'text', sort: 40 },
+  { category: 'wechatpay', name: 'api_v3_key', col_num: 12, label: 'APIv3密钥', value: '', input_type: 'text', sort: 50, is_secret: true },
+  { category: 'wechatpay', name: 'private_key', col_num: 24, label: '商户API私钥(apiclient_key.pem)', value: '', placeholder: '粘贴 apiclient_key.pem 全部内容（含 BEGIN/END）', input_type: 'textarea', sort: 60, is_secret: true },
+  { category: 'wechatpay', name: 'public_key_id', col_num: 12, label: '微信支付公钥ID', value: '', input_type: 'text', sort: 70 },
+  { category: 'wechatpay', name: 'public_key', col_num: 24, label: '微信支付公钥', value: '', placeholder: '微信支付公钥与平台证书二选一填写', input_type: 'textarea', sort: 80, is_secret: true },
+  { category: 'wechatpay', name: 'platform_cert', col_num: 24, label: '微信支付平台证书', value: '', placeholder: '可点击【获取平台证书】自动获取，与微信支付公钥二选一', input_type: 'textarea', sort: 90, is_secret: true },
+  { category: 'wechatpay', name: 'enable_sandbox', col_num: 8, label: '是否启用沙箱环境', value: 'false', input_type: 'switch', sort: 100 },
+
+  // 支付宝
+  { category: 'alipay', name: 'enable_alipay', col_num: 8, label: '是否启用支付宝支付', value: 'false', input_type: 'switch', sort: 10 },
+  { category: 'alipay', name: 'appid', col_num: 12, label: '支付宝AppID', value: '', input_type: 'text', sort: 20 },
+  { category: 'alipay', name: 'gateway', col_num: 12, label: '网关环境', value: 'https://openapi.alipay.com/gateway.do', input_type: 'select', sort: 30, options: 'https://openapi.alipay.com/gateway.do:正式环境\nhttps://openapi-sandbox.dl.alipaydev.com/gateway.do:沙箱环境' },
+  { category: 'alipay', name: 'private_key', col_num: 24, label: '应用私钥', value: '', input_type: 'textarea', sort: 40, is_secret: true },
+  { category: 'alipay', name: 'public_key', col_num: 24, label: '支付宝公钥', value: '', input_type: 'textarea', sort: 50, is_secret: true },
+
+  // 虎皮椒
+  { category: 'xunhupay', name: 'enable_xunhupay', col_num: 8, label: '是否启用虎皮椒支付', value: 'false', input_type: 'switch', sort: 10 },
+  { category: 'xunhupay', name: 'xunhupay_name', col_num: 8, label: '支付方式显示名称', value: '虎皮椒支付', input_type: 'text', sort: 20 },
+  { category: 'xunhupay', name: 'appid', col_num: 12, label: 'AppID', value: '', input_type: 'text', sort: 30 },
+  { category: 'xunhupay', name: 'app_secret', col_num: 12, label: 'AppSecret', value: '', input_type: 'text', sort: 40, is_secret: true },
+  { category: 'xunhupay', name: 'gateway_url', col_num: 12, label: '网关地址', value: 'https://api.xunhupay.com', input_type: 'text', sort: 50 },
+
+  // 短信
+  { category: 'sms', name: 'sms_provider', col_num: 24, label: '短信服务商', value: 'smsAliyun', placeholder: '切换服务商后，请在右侧填写对应服务商配置并分别保存', input_type: 'select', sort: 10, options: 'smsAliyun:阿里云\nsmsTencent:腾讯云\nsmsBaidu:百度云\nsmsHuawei:华为云\nsmsHaomas:浩信' },
+
+  { category: 'smsAliyun', name: 'enable', col_num: 8, label: '是否启用', value: 'false', input_type: 'switch', sort: 10 },
+  { category: 'smsAliyun', name: 'access_key_id', col_num: 12, label: 'AccessKey ID', value: '', input_type: 'text', sort: 20 },
+  { category: 'smsAliyun', name: 'access_key_secret', col_num: 12, label: 'AccessKey Secret', value: '', input_type: 'text', sort: 30, is_secret: true },
+  { category: 'smsAliyun', name: 'sign_name', col_num: 12, label: '短信签名', value: '', input_type: 'text', sort: 40 },
+  { category: 'smsAliyun', name: 'template_code', col_num: 12, label: '验证码模板CODE', value: '', placeholder: '模板变量须为 ${code}', input_type: 'text', sort: 50 },
+
+  { category: 'smsTencent', name: 'enable', col_num: 8, label: '是否启用', value: 'false', input_type: 'switch', sort: 10 },
+  { category: 'smsTencent', name: 'secret_id', col_num: 12, label: 'SecretId', value: '', input_type: 'text', sort: 20 },
+  { category: 'smsTencent', name: 'secret_key', col_num: 12, label: 'SecretKey', value: '', input_type: 'text', sort: 30, is_secret: true },
+  { category: 'smsTencent', name: 'app_id', col_num: 12, label: 'SdkAppId', value: '', input_type: 'text', sort: 40 },
+  { category: 'smsTencent', name: 'sign_name', col_num: 12, label: '短信签名', value: '', input_type: 'text', sort: 50 },
+  { category: 'smsTencent', name: 'template_id', col_num: 12, label: '验证码模板ID', value: '', input_type: 'text', sort: 60 },
+
+  { category: 'smsBaidu', name: 'enable', col_num: 8, label: '是否启用', value: 'false', input_type: 'switch', sort: 10 },
+  { category: 'smsBaidu', name: 'access_key', col_num: 12, label: 'Access Key', value: '', input_type: 'text', sort: 20 },
+  { category: 'smsBaidu', name: 'secret_key', col_num: 12, label: 'Secret Key', value: '', input_type: 'text', sort: 30, is_secret: true },
+  { category: 'smsBaidu', name: 'sign_name', col_num: 12, label: '短信签名', value: '', input_type: 'text', sort: 40 },
+  { category: 'smsBaidu', name: 'template_id', col_num: 12, label: '验证码模板ID', value: '', input_type: 'text', sort: 50 },
+
+  { category: 'smsHuawei', name: 'enable', col_num: 8, label: '是否启用', value: 'false', input_type: 'switch', sort: 10 },
+  { category: 'smsHuawei', name: 'app_key', col_num: 12, label: 'App Key', value: '', input_type: 'text', sort: 20 },
+  { category: 'smsHuawei', name: 'app_secret', col_num: 12, label: 'App Secret', value: '', input_type: 'text', sort: 30, is_secret: true },
+  { category: 'smsHuawei', name: 'sender', col_num: 12, label: '签名通道号', value: '', input_type: 'text', sort: 40 },
+  { category: 'smsHuawei', name: 'template_id', col_num: 12, label: '验证码模板ID', value: '', input_type: 'text', sort: 50 },
+
+  { category: 'smsHaomas', name: 'enable', col_num: 8, label: '是否启用', value: 'false', input_type: 'switch', sort: 10 },
+  { category: 'smsHaomas', name: 'api_url', col_num: 12, label: '接口地址', value: 'https://api.haomas.com/sms/v1', input_type: 'text', sort: 20 },
+  { category: 'smsHaomas', name: 'app_id', col_num: 12, label: 'AppID', value: '', input_type: 'text', sort: 30 },
+  { category: 'smsHaomas', name: 'app_key', col_num: 12, label: 'AppKey', value: '', input_type: 'text', sort: 40, is_secret: true },
+  { category: 'smsHaomas', name: 'template_code', col_num: 12, label: '验证码模板编号', value: '', input_type: 'text', sort: 50 },
+
+  // 第三方登录 OAuth（7 个子类）
+  ...oauthConfigSeed('oauthWechat', '微信开放平台', 'https://open.weixin.qq.com/', {
+    clientIdLabel: 'AppID', clientIdPlaceholder: '微信开放平台应用 AppID',
+  }),
+  ...oauthConfigSeed('oauthOfficialAccount', '微信公众号', 'https://mp.weixin.qq.com/', {
+    clientIdLabel: '公众号AppID', clientIdPlaceholder: '公众号 AppID（用于微信内网页授权登录）',
+    extra: [
+      { name: 'official_account_appid', label: '公众号AppID（支付用）', value: '', placeholder: '一般与上方AppID一致，微信内支付时使用', input_type: 'text', sort: 90 },
+      { name: 'token', label: '消息校验Token', value: '', input_type: 'text', sort: 100 },
+      { name: 'encoding_aes_key', label: '消息加解密密钥', value: '', input_type: 'text', sort: 110, is_secret: true },
+    ],
+  }),
+  ...oauthConfigSeed('oauthQQ', 'QQ互联', 'https://connect.qq.com/manage.html#/'),
+  ...oauthConfigSeed('oauthGoogle', 'Google', 'https://console.developers.google.com/'),
+  ...oauthConfigSeed('oauthGithub', 'GitHub', 'https://github.com/settings/apps/new'),
+  ...oauthConfigSeed('oauthGitee', 'Gitee', 'https://gitee.com/oauth/applications'),
+  ...oauthConfigSeed('oauthCustom', '自定义Oauth', '', {
+    extra: [
+      { name: 'authorize_url', label: '授权地址', value: '', placeholder: '如 https://example.com/oauth/authorize', input_type: 'text', sort: 90 },
+      { name: 'token_url', label: '获取Token地址', value: '', input_type: 'text', sort: 100 },
+      { name: 'userinfo_url', label: '获取用户信息地址', value: '', input_type: 'text', sort: 110 },
+      { name: 'scope', label: '授权范围(scope)', value: '', input_type: 'text', sort: 120 },
+    ],
+  }),
 ];
 
 export const GROUPS_SEED = [

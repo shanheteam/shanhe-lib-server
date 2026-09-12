@@ -1,17 +1,16 @@
 import { Column, Entity, Index, PrimaryGeneratedColumn } from 'typeorm';
 
 @Entity('document_category')
+@Index('idx_doc_cate', ['document_id', 'category_id'], { unique: true })
+@Index('document_id', ['document_id'])
+@Index('category_id', ['category_id'])
 export class DocumentCategory {
   @PrimaryGeneratedColumn({ type: 'bigint' })
   id: number;
 
-  @Index('document_id')
-  @Index('idx_doc_cate', { unique: true })
   @Column({ type: 'bigint', default: 0 })
   document_id: number;
 
-  @Index('category_id')
-  @Index('idx_doc_cate', { unique: true })
   @Column({ type: 'bigint', default: 0 })
   category_id: number;
 

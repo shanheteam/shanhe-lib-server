@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { JwtService } from '@nestjs/jwt';
@@ -13,6 +13,7 @@ import {
   UserGroup,
 } from '../../entities';
 import { Biz } from '../../common/biz.exception';
+import { OssService } from './oss.service';
 import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -125,6 +126,8 @@ function isDocumentExt(ext: string): boolean {
 
 @Injectable()
 export class AttachmentService {
+  private readonly logger = new Logger(AttachmentService.name);
+
   constructor(
     @InjectRepository(Attachment)
     private readonly attachmentRepo: Repository<Attachment>,
@@ -142,6 +145,7 @@ export class AttachmentService {
     private readonly punishmentRepo: Repository<Punishment>,
     private readonly configService: ConfigService,
     private readonly jwtService: JwtService,
+    private readonly ossService: OssService,
   ) {}
 
   // ---------- 文件保存 ----------
@@ -156,9 +160,19 @@ export class AttachmentService {
 
     const dir = isDocument ? 'documents' : 'uploads';
     const relPath = `${dir}/${md5.slice(0, 5).split('').join('/')}/${md5}${ext}`;
-    const absPath = path.resolve(process.cwd(), relPath);
-    fs.mkdirSync(path.dirname(absPath), { recursive: true });
-    fs.writeFileSync(absPath, file.buffer);
+
+    let storedPath: string;
+    if (!isDocument && this.ossService.isEnabled()) {
+      // OSS 模式：通用附件（图片/头像/文章资源）上传到 OSS，path 存外链。
+      try {
+        storedPath = await this.ossService.put(relPath, file.buffer, file.mimetype);
+      } catch (e) {
+        this.logger.warn(`OSS 上传失败，回退本地存储：${(e as Error).message}`);
+        storedPath = await this.saveToLocal(relPath, file.buffer);
+      }
+    } else {
+      storedPath = await this.saveToLocal(relPath, file.buffer);
+    }
 
     let width = 0;
     let height = 0;
@@ -175,10 +189,18 @@ export class AttachmentService {
       ext,
       enable: true,
       hash: md5,
-      path: '/' + relPath,
+      path: storedPath,
       width,
       height,
     };
+  }
+
+  /** 写入本地磁盘，返回以 / 开头的相对路径。 */
+  private saveToLocal(relPath: string, buffer: Buffer): string {
+    const absPath = path.resolve(process.cwd(), relPath);
+    fs.mkdirSync(path.dirname(absPath), { recursive: true });
+    fs.writeFileSync(absPath, buffer);
+    return '/' + relPath;
   }
 
   async createAttachment(data: Partial<Attachment>): Promise<Attachment> {

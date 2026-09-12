@@ -11,6 +11,7 @@ import {
   Punishment,
 } from '../../entities';
 import { AttachmentService } from './attachment.service';
+import { OssService } from './oss.service';
 import { AttachmentController } from './attachment.controller';
 import { UploadController } from './upload.controller';
 import { FileController } from './file.controller';
@@ -29,7 +30,7 @@ import { FileController } from './file.controller';
     JwtModule.register({}),
   ],
   controllers: [AttachmentController, UploadController, FileController],
-  providers: [AttachmentService],
-  exports: [AttachmentService],
+  providers: [AttachmentService, OssService],
+  exports: [AttachmentService, OssService],
 })
 export class AttachmentModule {}
