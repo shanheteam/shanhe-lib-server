@@ -1,5 +1,4 @@
 import {
-  Body,
   Controller,
   Delete,
   Get,
@@ -16,8 +15,8 @@ export class SearchRecordController {
 
   @Delete()
   @RequirePermission('/api.v1.SearchRecordAPI/DeleteSearchRecord')
-  async remove(@Body() body: any) {
-    await this.service.remove(toNumberArray(body?.id));
+  async remove(@Query('id') id: unknown) {
+    await this.service.remove(toNumberArray(id));
     return {};
   }
 

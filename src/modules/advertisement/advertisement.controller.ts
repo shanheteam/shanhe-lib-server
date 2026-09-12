@@ -32,8 +32,8 @@ export class AdvertisementController {
 
   @Delete()
   @RequirePermission('/api.v1.AdvertisementAPI/DeleteAdvertisement')
-  remove(@Body() body: any) {
-    return this.service.remove(toNumberArray(body?.id));
+  remove(@Query('id') id: unknown) {
+    return this.service.remove(toNumberArray(id));
   }
 
   @Get('position')

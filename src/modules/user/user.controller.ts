@@ -15,6 +15,7 @@ import { RequirePermission } from '../../common/decorators/permission.decorator'
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { JwtUser } from '../../auth/jwt-user.type';
 import { UserService } from './user.service';
+import { toNumberArray } from '../../common/query.util';
 
 @Controller('user')
 export class UserController {
@@ -55,8 +56,14 @@ export class UserController {
 
   @RequirePermission('/api.v1.UserAPI/DeleteUser')
   @Delete()
-  deleteUser(@Body() body: any, @CurrentUser() user: JwtUser) {
-    return this.userService.deleteUser(body, user);
+  deleteUser(@Query() query: any, @CurrentUser() user: JwtUser) {
+    return this.userService.deleteUser(
+      {
+        id: toNumberArray(query?.id),
+        password: query?.password,
+      },
+      user,
+    );
   }
 
   @RequirePermission('/api.v1.UserAPI/AddUser')

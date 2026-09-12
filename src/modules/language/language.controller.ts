@@ -39,8 +39,8 @@ export class LanguageController {
 
   @Delete()
   @RequirePermission('/api.v1.LanguageAPI/DeleteLanguage')
-  async remove(@Body() body: any) {
-    await this.service.remove(toNumberArray(body?.id));
+  async remove(@Query('id') id: unknown) {
+    await this.service.remove(toNumberArray(id));
     return {};
   }
 
