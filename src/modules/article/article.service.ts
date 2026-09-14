@@ -15,6 +15,7 @@ import {
 import { Biz } from '../../common/biz.exception';
 import { PermissionService } from '../../auth/permission.service';
 import { JwtUser } from '../../auth/jwt-user.type';
+import { tb } from '../../database/naming-strategy';
 
 const ARTICLE_STATUS_PENDING = 0;
 const ARTICLE_STATUS_PASS = 1;
@@ -364,7 +365,7 @@ export class ArticleService {
     const categoryIds = toNumberArray(query.category_id);
     if (categoryIds.length) {
       qb.andWhere(
-        'EXISTS (SELECT 1 FROM article_category ac WHERE ac.article_id = a.id AND ac.category_id IN (:...categoryIds))',
+        `EXISTS (SELECT 1 FROM ${tb('article_category')} ac WHERE ac.article_id = a.id AND ac.category_id IN (:...categoryIds))`,
         { categoryIds },
       );
     }
@@ -613,7 +614,7 @@ export class ArticleService {
     const categoryIds = toNumberArray(query.category_id);
     if (categoryIds.length) {
       qb.andWhere(
-        'EXISTS (SELECT 1 FROM article_category ac WHERE ac.article_id = a.id AND ac.category_id IN (:...categoryIds))',
+        `EXISTS (SELECT 1 FROM ${tb('article_category')} ac WHERE ac.article_id = a.id AND ac.category_id IN (:...categoryIds))`,
         { categoryIds },
       );
     }
