@@ -334,19 +334,19 @@ export class ConfigController {
     const envs = [
       {
         name: 'LibreOffice',
-        description: 'LibreOffice是由文档基金会开发的自由及开放源代码的办公套件。魔豆文库用于将office等文档转为pdf。',
+        description: 'LibreOffice是由文档基金会开发的自由及开放源代码的办公套件。用于将office等文档转为pdf。',
         cmd: 'soffice',
         is_required: true,
       },
       {
         name: 'Calibre',
-        description: 'calibre是一个自由开源的电子书软件套装。魔豆文库用于将epub、mobi等电子书转为pdf。',
+        description: 'calibre是一个自由开源的电子书软件套装。用于将epub、mobi等电子书转为pdf。',
         cmd: 'ebook-convert',
         is_required: true,
       },
       {
         name: 'MuPDF',
-        description: 'MuPDF是一款以C语言编写的自由及开放源代码软件库，是PDF和XPS解析和渲染引擎。魔豆文库用于将PDF转为svg、png等图片。',
+        description: 'MuPDF是一款以C语言编写的自由及开放源代码软件库，是PDF和XPS解析和渲染引擎。用于将PDF转为svg、png等图片。',
         cmd: 'mutool',
         is_required: false,
       },

@@ -155,7 +155,7 @@ export interface ConfigSeed {
   is_secret?: boolean;
 }
 
-const closeStatement = `<div>尊敬的用户，您好：</div><div>为了给您带来更好的使用体验，<strong>魔豆文库</strong> 正在对服务进行升级维护，预计恢复时间为 <span style="color:red">2024-10-24 06:00:00</span>，请您稍后再进行访问。</div><div>升级维护期间，普通用户将无法正常使用（系统管理人员出于维护的需要不受升级影响）。</div><div>由此带来的不便，敬请谅解。</div>`;
+const closeStatement = `<div>尊敬的用户，您好：</div><div>为了给您带来更好的使用体验，<strong>山河图书馆</strong> 正在对服务进行升级维护，预计恢复时间为 <span style="color:red">2024-10-24 06:00:00</span>，请您稍后再进行访问。</div><div>升级维护期间，普通用户将无法正常使用（系统管理人员出于维护的需要不受升级影响）。</div><div>由此带来的不便，敬请谅解。</div>`;
 
 interface OAuthSeedOptions {
   clientIdLabel?: string;
@@ -183,11 +183,11 @@ function oauthConfigSeed(
 }
 
 export const CONFIG_SEED: ConfigSeed[] = [
-  { category: 'system', name: 'sitename', col_num: 24, label: '网站名称', value: '魔豆文库', placeholder: '请输入您网站的名称，如：魔豆文库', input_type: 'text', sort: 10 },
-  { category: 'system', name: 'domain', col_num: 24, label: '【重要】网站域名', value: 'https://moredoc.mnt.ltd', placeholder: '请输入您网站的域名访问地址，带 https:// 或 http:// 如 https://moredoc.mnt.ltd，用以生成网站地图sitemap', input_type: 'text', sort: 11 },
-  { category: 'system', name: 'title', col_num: 24, label: '首页标题', value: 'MOREDOC · 魔豆文库', placeholder: '请输入您网站的首页标题，如：魔豆文库，强大、专业的文库系统', input_type: 'text', sort: 20 },
-  { category: 'system', name: 'keywords', col_num: 24, label: '网站关键字', value: 'MOREDOC · 魔豆文库', placeholder: '请输入您网站的关键字', input_type: 'text', sort: 30 },
-  { category: 'system', name: 'description', col_num: 24, label: '网站描述', value: 'MOREDOC · 魔豆文库', placeholder: '请输入您网站的描述', input_type: 'textarea', sort: 40 },
+  { category: 'system', name: 'sitename', col_num: 24, label: '网站名称', value: '山河图书馆', placeholder: '请输入您网站的名称，如：山河图书馆', input_type: 'text', sort: 10 },
+  { category: 'system', name: 'domain', col_num: 24, label: '【重要】网站域名', value: 'https://lib.shanhe.co', placeholder: '请输入您网站的域名访问地址，带 https:// 或 http:// 如 https://lib.shanhe.co，用以生成网站地图sitemap', input_type: 'text', sort: 11 },
+  { category: 'system', name: 'title', col_num: 24, label: '首页标题', value: '图书馆 - 山河大学', placeholder: '请输入您网站的首页标题，如：图书馆 - 山河大学', input_type: 'text', sort: 20 },
+  { category: 'system', name: 'keywords', col_num: 24, label: '网站关键字', value: '图书馆 - 山河大学', placeholder: '请输入您网站的关键字', input_type: 'text', sort: 30 },
+  { category: 'system', name: 'description', col_num: 24, label: '网站描述', value: '图书馆 - 山河大学', placeholder: '请输入您网站的描述', input_type: 'textarea', sort: 40 },
   { category: 'system', name: 'recommend_words', col_num: 24, label: '首页搜索推荐词', value: '', placeholder: '网站首页搜索推荐关键字，多个关键字用英文逗号分隔', input_type: 'text', sort: 50 },
   { category: 'system', name: 'logo', col_num: 12, label: '网站Logo', value: '', placeholder: '请上传一张图片作为网站Logo', input_type: 'image', sort: 60 },
   { category: 'system', name: 'favicon', col_num: 12, label: '网站Favicon', value: '', placeholder: '请上传一张方方正正的小图片作为网站favicon', input_type: 'image', sort: 61 },
