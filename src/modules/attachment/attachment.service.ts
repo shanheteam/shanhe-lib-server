@@ -150,9 +150,17 @@ export class AttachmentService {
 
   // ---------- 文件保存 ----------
 
+  /** multer 默认按 latin1 解码 multipart 文件名，中文会乱码，这里转成 utf8。 */
+  private decodeOriginalName(name: string): string {
+    const buf = Buffer.from(name, 'latin1');
+    const utf8 = buf.toString('utf8');
+    return utf8.includes('\uFFFD') ? name : utf8;
+  }
+
   /** 校验并保存上传文件，返回附件元数据（不落库）。 */
   async saveFile(file: Express.Multer.File, ip: string, isDocument = false): Promise<SavedFile> {
-    const ext = path.extname(file.originalname).toLowerCase();
+    const originalName = this.decodeOriginalName(file.originalname);
+    const ext = path.extname(originalName).toLowerCase();
     const md5 = crypto.createHash('md5').update(file.buffer).digest('hex');
 
     const disabled = await this.attachmentRepo.findOne({ where: { hash: md5, enable: false } });
@@ -184,7 +192,7 @@ export class AttachmentService {
 
     return {
       size: file.size,
-      name: file.originalname,
+      name: originalName,
       ip,
       ext,
       enable: true,

@@ -31,11 +31,13 @@ async function bootstrap() {
     allowedHeaders: ['Content-Type', 'Authorization'],
   });
 
-  // 静态资源目录（上传的图片等），运行时自动创建
+  // 静态资源目录（上传的图片等），运行时自动创建并暴露给前端访问
   const uploadsDir = path.resolve(process.cwd(), env.uploadDir);
   const documentsDir = path.resolve(process.cwd(), env.documentDir);
   fs.mkdirSync(uploadsDir, { recursive: true });
   fs.mkdirSync(documentsDir, { recursive: true });
+  app.useStaticAssets(uploadsDir, { prefix: '/' + env.uploadDir });
+  app.useStaticAssets(documentsDir, { prefix: '/' + env.documentDir });
 
   await app.listen(env.port);
   console.log(`[moredoc-server] listening on http://localhost:${env.port}`);
