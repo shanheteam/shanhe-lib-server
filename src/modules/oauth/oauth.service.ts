@@ -160,11 +160,13 @@ export class OauthService {
 
     // Get user info from OAuth provider
     const userInfo = await this.getUserInfo(oauthType, access_token, openid);
+    console.log('[OAuth] userInfo from provider:', JSON.stringify(userInfo));
 
-    const nickname = userInfo.nickname || userInfo.name || userInfo.login || '';
+    const nickname = userInfo.nickname || userInfo.name || userInfo.login || userInfo.display_name || '';
     const avatar = userInfo.avatar || userInfo.avatar_url || userInfo.picture || '';
     const email = userInfo.email || '';
     const unionid = userInfo.unionid || '';
+    console.log('[OAuth] parsed - nickname:', nickname, 'email:', email, 'openid:', openid);
 
     // Check if this OAuth account is already bound
     const existingOauth = await this.userOauthRepo.findOne({
