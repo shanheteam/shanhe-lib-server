@@ -34,10 +34,14 @@ async function bootstrap() {
   // 静态资源目录（上传的图片等），运行时自动创建并暴露给前端访问
   const uploadsDir = path.resolve(process.cwd(), env.uploadDir);
   const documentsDir = path.resolve(process.cwd(), env.documentDir);
+  const sitemapDir = path.resolve(process.cwd(), 'sitemap');
   fs.mkdirSync(uploadsDir, { recursive: true });
   fs.mkdirSync(documentsDir, { recursive: true });
+  fs.mkdirSync(sitemapDir, { recursive: true });
   app.useStaticAssets(uploadsDir, { prefix: '/' + env.uploadDir });
   app.useStaticAssets(documentsDir, { prefix: '/' + env.documentDir });
+  // sitemap 目录对外暴露，使 /sitemap.xml 及分页文件可被搜索引擎访问
+  app.useStaticAssets(sitemapDir, { prefix: '/sitemap' });
 
   await app.listen(env.port);
   console.log(`[moredoc-server] listening on http://localhost:${env.port}`);

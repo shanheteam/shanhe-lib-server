@@ -65,7 +65,19 @@ export class ConfigController {
     private readonly permissionService: PermissionService,
     private readonly configService: ConfigService,
     private readonly dataSource: DataSource,
-  ) {}
+  ) {
+    // 定时自动重建 sitemap：启动 5 分钟后首次生成，之后每天生成一次（兜底，手动按钮仍可用）
+    setTimeout(() => {
+      this.updateSitemap().catch((err) =>
+        console.error('[sitemap] auto rebuild failed', err),
+      );
+    }, 5 * 60 * 1000);
+    setInterval(() => {
+      this.updateSitemap().catch((err) =>
+        console.error('[sitemap] auto rebuild failed', err),
+      );
+    }, 24 * 3600 * 1000);
+  }
 
   @Public()
   @Get('settings')
