@@ -120,9 +120,11 @@ export class OauthService {
     user?: Record<string, unknown>;
     oauth?: Record<string, unknown>;
   }> {
+    console.log('[OAuth] login body:', JSON.stringify(body));
     const code = body.code ?? '';
     const oauthType = Number(body.oauth_type) || 0;
     const codeVerifier = body.code_verifier ?? '';
+    console.log('[OAuth] codeVerifier present:', !!codeVerifier, 'len:', codeVerifier?.length);
 
     if (!code) {
       throw Biz.invalidArgument('code不能为空');
@@ -458,11 +460,17 @@ export class OauthService {
         params.set('code_verifier', codeVerifier);
       }
 
-      const response = await fetch(token_url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: params.toString(),
-      });
+      let response;
+      try {
+        response = await fetch(token_url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: params.toString(),
+        });
+      } catch (err: any) {
+        console.error('[OAuth] fetch network error:', err.message, 'cause:', err.cause);
+        throw Biz.internal(`获取token网络错误: ${err.message} ${err.cause?.message || ''}`);
+      }
 
       if (!response.ok) {
         const errText = await response.text();
