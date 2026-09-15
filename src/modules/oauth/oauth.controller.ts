@@ -33,6 +33,16 @@ export class OauthController {
   }
 
   /**
+   * Password-grant login: lib submits email+password, provider verifies,
+   * returns JWT for local user.
+   */
+  @Public()
+  @Post('password-login')
+  passwordLogin(@Body() body: any) {
+    return this.oauthService.loginByPassword(body);
+  }
+
+  /**
    * Bind OAuth account to current logged-in user
    */
   @RequireLogin()
