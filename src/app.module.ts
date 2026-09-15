@@ -32,6 +32,7 @@ import { OrderModule } from './modules/order/order.module';
 import { SmsModule } from './modules/sms/sms.module';
 import { UserVipModule } from './modules/uservip/uservip.module';
 import { PayConfigModule } from './modules/payconfig/payconfig.module';
+import { OauthModule } from './modules/oauth/oauth.module';
 
 @Module({
   imports: [
@@ -67,6 +68,7 @@ import { PayConfigModule } from './modules/payconfig/payconfig.module';
     SmsModule,
     UserVipModule,
     PayConfigModule,
+    OauthModule,
   ],
 })
 export class AppModule {}

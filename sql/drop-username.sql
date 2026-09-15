@@ -7,18 +7,12 @@
 --
 -- 注意：
 -- 1) 默认表前缀为 mnt_（表名 mnt_user）。若部署环境配置了不同的 DB_PREFIX，
---    请将文中三处表名统一替换为「你的前缀_user」。
+--    请将文中所有 mnt_user 统一替换为「你的前缀_user」。
 -- 2) 建议先在备份后的数据库上执行，确认无误后再于生产环境执行。
--- 3) 执行可能耗时，请勿在中途中断事务。
+-- 3) 兼容 MySQL 5.7+，不使用 IF EXISTS 等 8.0+ 语法。
 -- =====================================================================
 
 START TRANSACTION;
-
--- ---------------------------------------------------------------------
--- 第 0 步（可选，安全确认）：查看当前 username 是否还有业务依赖
--- 确认应用代码（前端/后端）已不再读写该字段后再执行后续步骤。
--- SELECT COUNT(*) AS remain_username_rows FROM mnt_user WHERE COALESCE(username, '') <> '';
--- ---------------------------------------------------------------------
 
 -- ---------------------------------------------------------------------
 -- 第 1 步：回填 realname
@@ -56,17 +50,18 @@ UPDATE mnt_user u
  WHERE t.rn > 1;
 
 -- ---------------------------------------------------------------------
--- 第 4 步：正式 DROP username 列及其索引
+-- 第 4 步：删除 username 列上的所有索引（兼容 MySQL 5.7）
+-- 说明：逐个尝试删除可能的索引名，索引不存在时忽略错误继续。
 -- ---------------------------------------------------------------------
-ALTER TABLE mnt_user DROP INDEX IF EXISTS idx_username;
 
--- MySQL 各版本对列的索引命名存在差异，若上方索引名不匹配，
--- 可改用下面的等价写法（线 5 先查询系统表）：
---   SELECT INDEX_NAME FROM information_schema.STATISTICS
---       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'mnt_user'
---         AND COLUMN_NAME = 'username';
---   根据实际索引名替换 idx_username 后再执行 ALTER。
+-- 尝试删除常见索引名（不存在会报错，但不影响后续语句）
+ALTER TABLE mnt_user DROP INDEX idx_username;
+ALTER TABLE mnt_user DROP INDEX username;
+ALTER TABLE mnt_user DROP INDEX uk_username;
 
+-- ---------------------------------------------------------------------
+-- 第 5 步：正式 DROP username 列
+-- ---------------------------------------------------------------------
 ALTER TABLE mnt_user DROP COLUMN username;
 
 COMMIT;

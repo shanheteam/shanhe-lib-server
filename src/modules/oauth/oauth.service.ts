@@ -252,13 +252,12 @@ export class OauthService {
         password: randomPassword,
         email: randomEmail,
         avatar,
-        nickname: '',
         realname: nickname,
         login_at: now,
         created_at: now,
         updated_at: now,
       }),
-    );
+    ) as User;
 
     // Create OAuth binding
     await this.userOauthRepo.save(
