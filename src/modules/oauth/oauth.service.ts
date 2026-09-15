@@ -458,17 +458,26 @@ export class OauthService {
         params.set('code_verifier', codeVerifier);
       }
 
+      const bodyStr = params.toString();
+      console.log('[OAuth] token request ->', token_url);
+      console.log('[OAuth] token body ->', bodyStr);
+      console.log('[OAuth] codeVerifier present ->', !!codeVerifier, 'len:', codeVerifier?.length);
+
       const response = await fetch(token_url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: params.toString(),
+        body: bodyStr,
       });
 
+      const respText = await response.text();
+      console.log('[OAuth] token response status:', response.status);
+      console.log('[OAuth] token response body:', respText);
+
       if (!response.ok) {
-        throw Biz.internal(`获取token失败: ${response.status}`);
+        throw Biz.internal(`获取token失败: ${response.status} ${respText}`);
       }
 
-      const data = await response.json();
+      const data = JSON.parse(respText);
       return {
         access_token: data.access_token || '',
         refresh_token: data.refresh_token || '',
