@@ -679,7 +679,7 @@ export class ArticleService {
       });
     }
 
-    if (!rows.length) throw Biz.notFound('相关文章不存在');
+    if (!rows.length) return { article: [] };
 
     return { article: await this.attachListMeta(rows) };
   }
