@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Get,
+  Header,
   Post,
 } from '@nestjs/common';
 import { Public } from '../../common/decorators/public.decorator';
@@ -15,10 +16,12 @@ export class OauthController {
   constructor(private readonly oauthService: OauthService) {}
 
   /**
-   * Get enabled OAuth configs (public, used by login page)
+   * Get enabled OAuth configs (public, used by login page).
+   * 配置类接口禁止缓存，避免浏览器/CDN 缓存到陈旧的授权地址等配置。
    */
   @Public()
   @Get('configs')
+  @Header('Cache-Control', 'no-store')
   getConfigs() {
     return this.oauthService.getConfigs();
   }
