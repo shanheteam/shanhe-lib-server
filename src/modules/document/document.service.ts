@@ -335,8 +335,8 @@ export class DocumentService implements OnModuleInit {
       const isOwner = opts.userId !== undefined && opts.userId > 0 && opts.userId === uid;
 
       item.category_id = docCateMap.get(Number(doc.id)) || [];
-      item.username = userMap.get(uid)?.username || '';
-      item.deleted_username = userMap.get(Number(doc.deleted_user_id))?.username || '';
+      item.realname = userMap.get(uid)?.realname || '';
+      item.deleted_realname = userMap.get(Number(doc.deleted_user_id))?.realname || '';
       const hash = hashMap.get(Number(doc.id)) || '';
       item.attachment = hash ? { hash } : null;
       item.convert_error = errorMap.get(Number(doc.id)) || '';
@@ -815,7 +815,7 @@ export class DocumentService implements OnModuleInit {
     if (withAuthor) {
       const user = await this.userRepo.findOne({ where: { id: uid } });
       item.user = user
-        ? { id: Number(user.id), username: user.username, avatar: user.avatar, realname: user.realname, identity: user.identity }
+        ? { id: Number(user.id), avatar: user.avatar, realname: user.realname, identity: user.identity }
         : null;
     } else {
       item.user = null;

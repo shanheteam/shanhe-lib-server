@@ -5,18 +5,13 @@ export class User {
   @PrimaryGeneratedColumn({ type: 'bigint' })
   id: number;
 
-  @Index('username', { unique: true })
-  @Column({ type: 'varchar', length: 64 })
-  username: string;
-
   @Column({ type: 'varchar', length: 128 })
   password: string;
 
-  @Index('mobile')
-  @Column({ type: 'varchar', length: 20, default: '' })
+  @Column({ type: 'varchar', length: 64, default: '' })
   mobile: string;
 
-  @Index('idx_email')
+  @Index('idx_email', { unique: true })
   @Column({ type: 'varchar', length: 64, default: '' })
   email: string;
 

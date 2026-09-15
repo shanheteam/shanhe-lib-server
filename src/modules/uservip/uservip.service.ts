@@ -26,7 +26,7 @@ export class UserVipService {
     const qb = this.repo
       .createQueryBuilder('v')
       .leftJoin(User, 'u', 'u.id = v.user_id')
-      .select(['v.*', 'u.username AS username', 'u.mobile AS mobile', 'u.avatar AS avatar']);
+      .select(['v.*', 'u.realname AS realname', 'u.mobile AS mobile', 'u.avatar AS avatar']);
 
     const userIds = toNumberArray(query.user_id);
     if (userIds.length) qb.andWhere('v.user_id IN (:...userIds)', { userIds });
@@ -40,7 +40,7 @@ export class UserVipService {
     }
 
     const wd = toStringValue(query.wd);
-    if (wd) qb.andWhere('(u.username LIKE :wd OR u.mobile LIKE :wd)', { wd: `%${wd}%` });
+    if (wd) qb.andWhere('(u.realname LIKE :wd OR u.mobile LIKE :wd)', { wd: `%${wd}%` });
 
     qb.orderBy('v.id', 'DESC').skip((page - 1) * size).take(size);
     const [rows, total] = await Promise.all([qb.getRawMany(), qb.getCount()]);

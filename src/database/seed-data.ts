@@ -338,8 +338,7 @@ export const CONFIG_SEED: ConfigSeed[] = [
   { category: 'fulltext_search', name: 'host', col_num: 8, label: '搜索引擎地址', value: '127.0.0.1', placeholder: '如 127.0.0.1', input_type: 'text', sort: 30 },
   { category: 'fulltext_search', name: 'port', col_num: 8, label: '端口', value: '9200', input_type: 'number', sort: 40 },
   { category: 'fulltext_search', name: 'index', col_num: 8, label: '索引名', value: 'moredoc', input_type: 'text', sort: 50 },
-  { category: 'fulltext_search', name: 'username', col_num: 8, label: '用户名', value: '', input_type: 'text', sort: 60 },
-  { category: 'fulltext_search', name: 'password', col_num: 8, label: '密码', value: '', input_type: 'text', sort: 70, is_secret: true },
+  { category: 'fulltext_search', name: 'password', col_num: 8, label: '密码', value: '', input_type: 'text', sort: 60, is_secret: true },
   { category: 'fulltext_search', name: 'api_key', col_num: 24, label: 'API Key', value: '', placeholder: 'MeiliSearch 等使用 API Key 的引擎填写', input_type: 'text', sort: 80, is_secret: true },
 
   // 采集

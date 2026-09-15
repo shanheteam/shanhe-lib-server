@@ -35,7 +35,6 @@ export class ReportService {
       document_id: documentId,
       document_title: data.document_title ?? '',
       user_id: userId,
-      username: data.username ?? '',
       reason: data.reason ?? 0,
       status: data.status === undefined ? false : Boolean(data.status),
       remark: data.remark ?? '',

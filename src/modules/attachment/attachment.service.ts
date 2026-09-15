@@ -354,7 +354,7 @@ export class AttachmentService {
       height: a.height,
       ext: a.ext,
       ip: a.ip,
-      username: (a as any).username ?? '',
+      realname: (a as any).realname ?? '',
       type_name: ATTACHMENT_TYPE_NAME[a.type] ?? '',
       description: a.description,
       created_at: a.created_at,
@@ -413,10 +413,10 @@ export class AttachmentService {
 
     const idSet = [...new Set(list.map((a) => a.user_id).filter((id) => id > 0))];
     const users = idSet.length ? await this.userRepo.find({ where: { id: idSet as any } }) : [];
-    const nameMap = new Map(users.map((u) => [u.id, u.username]));
+    const nameMap = new Map(users.map((u) => [u.id, u.realname || u.email]));
 
     const attachment = list.map((a) => {
-      (a as any).username = nameMap.get(a.user_id) ?? '';
+      (a as any).realname = nameMap.get(a.user_id) ?? '';
       return this.serialize(a);
     });
 

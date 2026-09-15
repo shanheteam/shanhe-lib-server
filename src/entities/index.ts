@@ -37,6 +37,7 @@ import { SpiderDocument } from './spider-document.entity';
 import { Order } from './order.entity';
 import { Sms } from './sms.entity';
 import { UserVip } from './user-vip.entity';
+import { UserOauth } from './user-oauth.entity';
 
 export const entities = [
   User,
@@ -79,6 +80,7 @@ export const entities = [
   Order,
   Sms,
   UserVip,
+  UserOauth,
 ];
 
 export {
@@ -122,4 +124,5 @@ export {
   Order,
   Sms,
   UserVip,
+  UserOauth,
 };

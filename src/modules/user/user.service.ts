@@ -22,7 +22,6 @@ import { CaptchaService } from '../captcha/captcha.service';
 import { JwtUser } from '../../auth/jwt-user.type';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const MOBILE_RE = /^1[3-9]\d{9}$/;
 
 const EMAIL_CODE_REGISTER = 0;
 const EMAIL_CODE_LOGIN = 1;
@@ -34,7 +33,6 @@ const DYNAMIC_TYPE_SIGN = 11;
 // 用户公开字段（非管理员查询他人资料时仅返回这些字段）
 const PUBLIC_FIELDS = [
   'id',
-  'username',
   'avatar',
   'signature',
   'doc_count',
@@ -50,7 +48,6 @@ const PUBLIC_FIELDS = [
 ];
 
 interface RegisterBody {
-  username?: string;
   password?: string;
   captcha?: string;
   captcha_id?: string;
@@ -83,7 +80,6 @@ interface DeleteBody {
 
 interface SetUserBody {
   id?: number;
-  username?: string;
   password?: string;
   email?: string;
   group_id?: number[];
@@ -151,7 +147,6 @@ export class UserService {
   private buildUserJson(user: User, groupIds: number[] = []): Record<string, unknown> {
     return {
       id: Number(user.id),
-      username: user.username,
       mobile: user.mobile,
       email: user.email,
       address: user.address,
@@ -241,21 +236,14 @@ export class UserService {
   // ---------- 注册 / 登录 ----------
 
   async register(body: RegisterBody, ip = ''): Promise<{ token: string; user: Record<string, unknown> }> {
-    const username = String(body.username ?? '').trim();
     const password = body.password ?? '';
     const email = String(body.email ?? '').trim();
 
-    if (username.length < 3 || username.length > 32) {
-      throw Biz.invalidArgument('用户名长度需在3-32个字符之间');
-    }
     if (password.length < 6) {
       throw Biz.invalidArgument('密码长度不能小于6位');
     }
     if (!this.isValidEmail(email)) {
       throw Biz.invalidArgument('邮箱格式不正确');
-    }
-    if (this.isValidEmail(username) || MOBILE_RE.test(username)) {
-      throw Biz.invalidArgument('出于隐私保护，用户名不能是邮箱或手机号码');
     }
 
     if (this.config.getBool('security', 'enable_captcha_register')) {
@@ -267,10 +255,6 @@ export class UserService {
       }
     }
 
-    const existUsername = await this.userRepo.findOne({ where: { username } });
-    if (existUsername) {
-      throw Biz.alreadyExists('用户名已存在');
-    }
     const existEmail = await this.userRepo.findOne({ where: { email } });
     if (existEmail) {
       throw Biz.alreadyExists('邮箱已存在');
@@ -280,7 +264,6 @@ export class UserService {
     const now = new Date();
     const saved = await this.userRepo.save(
       this.userRepo.create({
-        username,
         password: makePassword(password),
         email,
         register_ip: ip || '',
@@ -323,7 +306,7 @@ export class UserService {
   }
 
   async login(body: RegisterBody, ip = ''): Promise<{ token: string; user: Record<string, unknown> }> {
-    const username = String(body.username ?? '').trim();
+    const email = String(body.email ?? '').trim();
     const password = body.password ?? '';
 
     if (this.config.getBool('security', 'enable_captcha_login')) {
@@ -335,9 +318,11 @@ export class UserService {
       }
     }
 
-    const user = await this.userRepo.findOne({ where: { username } });
+    const user = await this.userRepo.findOne({
+      where: { email },
+    });
     if (!user || !checkPassword(password, user.password)) {
-      throw Biz.invalidArgument('用户名或密码不正确');
+      throw Biz.invalidArgument('邮箱或密码不正确');
     }
 
     await this.userRepo.update(user.id, {
@@ -467,17 +452,10 @@ export class UserService {
   }
 
   async addUser(body: SetUserBody): Promise<Record<string, never>> {
-    const username = String(body.username ?? '').trim();
     const password = body.password ?? '';
     const email = String(body.email ?? '').trim();
     const groupIds = (body.group_id ?? []).map((v) => Number(v)).filter((v) => v > 0);
 
-    if (username.length < 3 || username.length > 32) {
-      throw Biz.invalidArgument('用户名长度需在3-32个字符之间');
-    }
-    if (this.isValidEmail(username) || MOBILE_RE.test(username)) {
-      throw Biz.invalidArgument('出于隐私保护，用户名不能是邮箱或手机号码');
-    }
     if (password.length < 6) {
       throw Biz.invalidArgument('密码长度不能小于6位');
     }
@@ -488,10 +466,6 @@ export class UserService {
       throw Biz.invalidArgument('用户组不能为空');
     }
 
-    const existUsername = await this.userRepo.findOne({ where: { username } });
-    if (existUsername) {
-      throw Biz.invalidArgument('用户名已存在');
-    }
     const existEmail = await this.userRepo.findOne({ where: { email } });
     if (existEmail) {
       throw Biz.invalidArgument('邮箱已存在');
@@ -500,7 +474,6 @@ export class UserService {
     const now = new Date();
     const saved = await this.userRepo.save(
       this.userRepo.create({
-        username,
         password: makePassword(password),
         email,
         created_at: now,
@@ -565,7 +538,7 @@ export class UserService {
     const wd = String(query.wd ?? '').trim();
     if (wd) {
       const like = `%${wd}%`;
-      qb.andWhere('(u.username LIKE :wd OR u.realname LIKE :wd OR u.email LIKE :wd OR u.mobile LIKE :wd)', { wd: like });
+      qb.andWhere('(u.realname LIKE :wd OR u.email LIKE :wd OR u.mobile LIKE :wd)', { wd: like });
     }
 
     const ids = this.toNumArray(query.id);

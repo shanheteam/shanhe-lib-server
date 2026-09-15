@@ -16,9 +16,6 @@ export class Report {
   @Column({ type: 'bigint', default: 0 })
   user_id: number;
 
-  @Column({ type: 'varchar', length: 64, default: '' })
-  username: string;
-
   @Column({ type: 'int', default: 0 })
   reason: number;
 

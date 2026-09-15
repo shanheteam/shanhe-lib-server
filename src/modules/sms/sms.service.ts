@@ -26,7 +26,7 @@ export class SmsService {
     const qb = this.repo
       .createQueryBuilder('s')
       .leftJoin(User, 'u', 'u.id = s.user_id')
-      .select(['s.*', 'u.username AS username'])
+      .select(['s.*', 'u.realname AS realname'])
       .orderBy('s.id', 'DESC')
       .skip((page - 1) * size)
       .take(size);

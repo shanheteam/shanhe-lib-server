@@ -57,7 +57,7 @@ export class OrderService implements OnModuleInit {
       .leftJoin(User, 'u', 'u.id = o.user_id')
       .select([
         'o.*',
-        'u.username AS username',
+        'u.realname AS realname',
         'u.mobile AS mobile',
         'u.avatar AS avatar',
       ]);

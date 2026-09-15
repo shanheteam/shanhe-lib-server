@@ -113,7 +113,7 @@ export class PunishmentService {
       ...r,
       id: Number(r.id),
       user_id: Number(r.user_id),
-      username: userMap.get(Number(r.user_id))?.username ?? '',
+      realname: userMap.get(Number(r.user_id))?.realname ?? '',
     }));
 
     return { total, punishment };

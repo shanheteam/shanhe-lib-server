@@ -793,12 +793,11 @@ export class ArticleService {
     if (userIds.length) {
       const users = await this.userRepo.find({
         where: { id: In(userIds) },
-        select: ['id', 'username', 'realname', 'avatar'],
+        select: ['id', 'realname', 'avatar'],
       });
       for (const u of users) {
         userMap[u.id] = {
           id: u.id,
-          username: u.username,
           realname: u.realname,
           avatar: u.avatar,
         };

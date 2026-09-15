@@ -302,7 +302,6 @@ export class CommentService {
         user: user
           ? {
               id: Number(user.id),
-              username: user.username,
               avatar: user.avatar,
               realname: user.realname,
               identity: user.identity,
