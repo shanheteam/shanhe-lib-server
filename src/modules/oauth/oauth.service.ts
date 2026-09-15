@@ -42,6 +42,7 @@ const OAUTH_TYPE_TO_NAME: Record<number, string> = {
 interface OauthLoginBody {
   code?: string;
   oauth_type?: number;
+  code_verifier?: string;
 }
 
 interface OauthBindBody {
@@ -94,25 +95,15 @@ export class OauthService {
         enable: true,
       };
 
-      // For custom OAuth, include extra fields and build full authorize URL
+      // For custom OAuth, include extra fields and return base authorize URL
       if (category === 'oauthCustom') {
         const authorizeUrl = this.config.get(category, 'authorize_url');
         const scope = this.config.get(category, 'scope');
         oauth.token_url = this.config.get(category, 'token_url');
         oauth.userinfo_url = this.config.get(category, 'userinfo_url');
         oauth.scope = scope;
-        // Build full authorization URL with query params
-        if (authorizeUrl && authorizeUrl.startsWith('http')) {
-          const params = new URLSearchParams({
-            client_id,
-            redirect_uri: redirect_url,
-            response_type: 'code',
-            scope: scope || 'user',
-          });
-          oauth.authorize_url = `${authorizeUrl}?${params.toString()}`;
-        } else {
-          oauth.authorize_url = '';
-        }
+        // Return base authorization URL (without query params, frontend will build with PKCE)
+        oauth.authorize_url_base = authorizeUrl && authorizeUrl.startsWith('http') ? authorizeUrl : '';
       }
 
       oauths.push(oauth);
@@ -131,6 +122,7 @@ export class OauthService {
   }> {
     const code = body.code ?? '';
     const oauthType = Number(body.oauth_type) || 0;
+    const codeVerifier = body.code_verifier ?? '';
 
     if (!code) {
       throw Biz.invalidArgument('code不能为空');
@@ -153,13 +145,14 @@ export class OauthService {
       throw Biz.internal('OAuth配置不完整');
     }
 
-    // Exchange code for access token
+    // Exchange code for access token (with PKCE code_verifier)
     const tokenData = await this.exchangeCodeForToken(
       oauthType,
       code,
       client_id,
       client_secret,
       redirect_url,
+      codeVerifier,
     );
 
     const access_token = tokenData.access_token || '';
@@ -400,6 +393,7 @@ export class OauthService {
     client_id: string,
     client_secret: string,
     redirect_url: string,
+    codeVerifier?: string,
   ): Promise<Record<string, string>> {
     const category = OAUTH_TYPE_TO_CATEGORY[oauthType];
 
@@ -416,6 +410,11 @@ export class OauthService {
         client_secret,
         redirect_uri: redirect_url,
       });
+
+      // Add code_verifier for PKCE
+      if (codeVerifier) {
+        params.set('code_verifier', codeVerifier);
+      }
 
       const response = await fetch(token_url, {
         method: 'POST',
