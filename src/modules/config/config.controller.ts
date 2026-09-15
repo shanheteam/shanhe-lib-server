@@ -483,6 +483,46 @@ export class ConfigController {
     return {};
   }
 
+  @RequirePermission('/api.v1.ConfigAPI/UpdateConfig')
+  @Post('config/oauth-test')
+  async testOauthConfig(@Body() body: { url: string; method?: string; data?: any; params?: any }) {
+    const { url, method = 'get', data, params } = body;
+    if (!url) return { status: 0, message: 'url is required' };
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 10000);
+    try {
+      const opts: RequestInit = {
+        method: method.toUpperCase(),
+        signal: controller.signal,
+        headers: { 'User-Agent': 'moredoc' },
+      };
+      if (data && method.toLowerCase() !== 'get') {
+        opts.headers = { ...opts.headers, 'Content-Type': 'application/json' };
+        opts.body = JSON.stringify(data);
+      }
+      const fullUrl = params
+        ? `${url}?${new URLSearchParams(params).toString()}`
+        : url;
+      const resp = await fetch(fullUrl, opts);
+      const text = await resp.text();
+      let json: any = null;
+      try { json = JSON.parse(text); } catch { /* not json */ }
+      return {
+        status: resp.status,
+        statusText: resp.statusText,
+        body: json ?? text,
+      };
+    } catch (err: any) {
+      return {
+        status: 0,
+        message: err?.message || String(err),
+      };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   private async hasAccess(user: JwtUser | undefined, method: string): Promise<boolean> {
     if (!user) return false;
     return this.permissionService.check(user.userId, method);
