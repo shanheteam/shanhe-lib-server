@@ -50,11 +50,6 @@ interface OauthBindBody {
   oauth_type?: number;
 }
 
-interface PasswordLoginBody {
-  email?: string;
-  password?: string;
-}
-
 @Injectable()
 export class OauthService {
   constructor(
@@ -353,106 +348,6 @@ export class OauthService {
       token,
       user: this.buildUserJson(newUser, groupIds),
     };
-  }
-
-  /**
-   * Password-grant login against custom OAuth provider (ROPC).
-   * lib backend submits email+password to provider's token_url,
-   * receives access token + user info, then matches/creates local user.
-   */
-  async loginByPassword(
-    body: PasswordLoginBody,
-  ): Promise<Record<string, unknown>> {
-    const email = (body.email ?? '').trim();
-    const password = body.password ?? '';
-
-    if (!email || !password) {
-      throw Biz.invalidArgument('请输入邮箱和密码');
-    }
-
-    const category = OAUTH_TYPE_TO_CATEGORY[OAUTH_TYPE_CUSTOM];
-    const enabled = this.config.getBool(category, 'enable');
-    if (!enabled) {
-      throw Biz.invalidArgument('该登录方式未启用');
-    }
-
-    const client_id = this.config.get(category, 'client_id');
-    const client_secret = this.config.get(category, 'client_secret');
-    const token_url = this.config.get(category, 'token_url');
-    const userinfo_url = this.config.get(category, 'userinfo_url');
-    const scopeReq = this.config.get(category, 'scope') || 'openid profile email';
-
-    if (!client_id || !client_secret || !token_url || !userinfo_url) {
-      throw Biz.internal('站点登录配置不完整');
-    }
-
-    // 1) Exchange email+password for access token (password grant)
-    const params = new URLSearchParams({
-      grant_type: 'password',
-      client_id,
-      client_secret,
-      scope: scopeReq,
-      username: email,
-      password,
-    });
-
-    let tokenData: any;
-    try {
-      const tokenRes = await fetch(token_url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: params.toString(),
-      });
-      if (!tokenRes.ok) {
-        throw new Error(`HTTP ${tokenRes.status}`);
-      }
-      tokenData = await tokenRes.json();
-    } catch (e: any) {
-      console.error('[OAuth] password login token exchange failed:', e);
-      throw Biz.invalidArgument('邮箱或密码不正确');
-    }
-
-    const access_token = tokenData.access_token || '';
-    const refresh_token = tokenData.refresh_token || '';
-    const scope = tokenData.scope || '';
-    const openid = tokenData.openid || tokenData.sub || tokenData.id || '';
-
-    if (!access_token || !openid) {
-      throw Biz.invalidArgument('邮箱或密码不正确');
-    }
-
-    // 2) Fetch user info with access token
-    let userInfo: Record<string, any> = {};
-    try {
-      const userRes = await fetch(userinfo_url, {
-        headers: { Authorization: `Bearer ${access_token}` },
-      });
-      if (userRes.ok) {
-        userInfo = await userRes.json();
-      }
-    } catch (e) {
-      console.error('[OAuth] password login fetch userinfo failed:', e);
-    }
-
-    console.log('[OAuth] password userInfo from provider:', JSON.stringify(userInfo));
-
-    const nickname = userInfo.nickname || userInfo.name || userInfo.login || userInfo.display_name || '';
-    const avatar = userInfo.avatar || userInfo.avatar_url || userInfo.picture || '';
-    const providerEmail = email || userInfo.email || '';
-    const unionid = userInfo.unionid || '';
-
-    // 3) Match / create local user (shared logic)
-    return this.matchOrCreateUser({
-      oauthType: OAUTH_TYPE_CUSTOM,
-      openid,
-      access_token,
-      refresh_token,
-      scope,
-      unionid,
-      nickname,
-      avatar,
-      email: providerEmail,
-    });
   }
 
   /**
