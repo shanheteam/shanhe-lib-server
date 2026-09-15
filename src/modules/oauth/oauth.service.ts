@@ -94,12 +94,25 @@ export class OauthService {
         enable: true,
       };
 
-      // For custom OAuth, include extra fields
+      // For custom OAuth, include extra fields and build full authorize URL
       if (category === 'oauthCustom') {
-        oauth.authorize_url = this.config.get(category, 'authorize_url');
+        const authorizeUrl = this.config.get(category, 'authorize_url');
+        const scope = this.config.get(category, 'scope');
         oauth.token_url = this.config.get(category, 'token_url');
         oauth.userinfo_url = this.config.get(category, 'userinfo_url');
-        oauth.scope = this.config.get(category, 'scope');
+        oauth.scope = scope;
+        // Build full authorization URL with query params
+        if (authorizeUrl && authorizeUrl.startsWith('http')) {
+          const params = new URLSearchParams({
+            client_id,
+            redirect_uri: redirect_url,
+            response_type: 'code',
+            scope: scope || 'user',
+          });
+          oauth.authorize_url = `${authorizeUrl}?${params.toString()}`;
+        } else {
+          oauth.authorize_url = '';
+        }
       }
 
       oauths.push(oauth);
