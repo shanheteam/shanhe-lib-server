@@ -490,11 +490,28 @@ export class OauthService {
       }
 
       const data = await response.json();
+      console.log('[OAuth] token response data keys:', Object.keys(data), 'data:', JSON.stringify(data));
+
+      // Try to extract openid from JWT payload (sub field)
+      let openid = data.openid || data.sub || data.id || '';
+      if (!openid && data.access_token) {
+        try {
+          const parts = data.access_token.split('.');
+          if (parts.length === 3) {
+            const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString());
+            openid = payload.sub || payload.id || '';
+            console.log('[OAuth] extracted openid from JWT payload:', openid);
+          }
+        } catch (e) {
+          console.error('[OAuth] failed to decode JWT:', e);
+        }
+      }
+
       return {
         access_token: data.access_token || '',
         refresh_token: data.refresh_token || '',
         scope: data.scope || '',
-        openid: data.openid || data.sub || data.id || '',
+        openid,
       };
     }
 
