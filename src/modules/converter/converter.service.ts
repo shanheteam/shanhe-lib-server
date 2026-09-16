@@ -50,7 +50,9 @@ export class ConverterService {
       execSync(`command -v "${cmd}"`, { stdio: 'ignore' });
       return true;
     } catch {
-      return false;
+      // PATH 中找不到时，回退检查当前项目本地安装的 node_modules/.bin 命令
+      const local = path.join(process.cwd(), 'node_modules', '.bin', cmd);
+      return fs.existsSync(local);
     }
   }
 

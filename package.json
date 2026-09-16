@@ -28,6 +28,7 @@
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
     "svg-captcha": "^1.4.0",
+    "svgo": "^4.1.0",
     "typeorm": "^0.3.20",
     "uuid": "^9.0.1"
   },
