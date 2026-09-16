@@ -460,16 +460,28 @@ export class OauthService {
         params.set('code_verifier', codeVerifier);
       }
 
-      let response;
-      try {
-        response = await fetch(token_url, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: params.toString(),
-        });
-      } catch (err: any) {
-        console.error('[OAuth] fetch network error:', err.message, 'cause:', err.cause);
-        throw Biz.internal(`获取token网络错误: ${err.message} ${err.cause?.message || ''}`);
+      const bodyStr = params.toString();
+      let response: Response | undefined;
+      let lastErr: any;
+      const maxRetries = 3;
+      for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+          response = await fetch(token_url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: bodyStr,
+          });
+          break;
+        } catch (err: any) {
+          lastErr = err;
+          console.error(`[OAuth] token fetch attempt ${attempt}/${maxRetries} failed:`, err.message);
+          if (attempt < maxRetries) {
+            await new Promise(r => setTimeout(r, 1000 * attempt));
+          }
+        }
+      }
+      if (!response) {
+        throw Biz.internal(`获取token网络错误(重试${maxRetries}次): ${lastErr?.message}`);
       }
 
       if (!response.ok) {
@@ -623,9 +635,26 @@ export class OauthService {
         throw Biz.internal('自定义OAuth未配置userinfo_url');
       }
 
-      const response = await fetch(userinfo_url, {
-        headers: { Authorization: `Bearer ${access_token}` },
-      });
+      let response: Response | undefined;
+      let lastErr: any;
+      const maxRetries = 3;
+      for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+          response = await fetch(userinfo_url, {
+            headers: { Authorization: `Bearer ${access_token}` },
+          });
+          break;
+        } catch (err: any) {
+          lastErr = err;
+          console.error(`[OAuth] userinfo fetch attempt ${attempt}/${maxRetries} failed:`, err.message);
+          if (attempt < maxRetries) {
+            await new Promise(r => setTimeout(r, 1000 * attempt));
+          }
+        }
+      }
+      if (!response) {
+        throw Biz.internal(`获取用户信息网络错误(重试${maxRetries}次): ${lastErr?.message}`);
+      }
 
       if (!response.ok) {
         throw Biz.internal(`获取用户信息失败: ${response.status}`);
