@@ -34,7 +34,7 @@ const OAUTH_TYPE_TO_NAME: Record<number, string> = {
   [OAUTH_TYPE_GITEE]: '码云',
   [OAUTH_TYPE_GITHUB]: 'GitHub',
   [OAUTH_TYPE_WECHAT_MINI]: '微信小程序',
-  [OAUTH_TYPE_CUSTOM]: '自定义',
+  [OAUTH_TYPE_CUSTOM]: '山河大学学籍',
   [OAUTH_TYPE_GOOGLE]: '谷歌',
   [OAUTH_TYPE_OFFICIAL_ACCOUNT]: '公众号',
 };
