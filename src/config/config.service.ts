@@ -39,6 +39,16 @@ export class ConfigService implements OnModuleInit {
     return v === undefined ? def : v;
   }
 
+  /** 取某个分类下的全部配置（name -> value），用于批量读取，避免逐次查库 */
+  getCategory(category: string): Record<string, string> {
+    const prefix = `${category}.`;
+    const map: Record<string, string> = {};
+    for (const [k, v] of this.cache) {
+      if (k.startsWith(prefix)) map[k.slice(prefix.length)] = v;
+    }
+    return map;
+  }
+
   getBool(category: string, name: string, def = false): boolean {
     const v = this.get(category, name, '');
     if (v === '') return def;

@@ -196,6 +196,14 @@ export class DocumentService implements OnModuleInit {
       qb.where('d.deleted_at IS NULL');
     }
 
+    if (opt.categoryIds && opt.categoryIds.length > 0) {
+      // 分类过滤下推到 SQL：命中任一分类即可，等价于原先在内存中做 document_id 交集
+      qb.andWhere(
+        'EXISTS (SELECT 1 FROM document_category dc WHERE dc.document_id = d.id AND dc.category_id IN (:...categoryIds))',
+        { categoryIds: opt.categoryIds },
+      );
+    }
+
     if (opt.docIds && opt.docIds.length > 0) {
       qb.andWhere('d.id IN (:...docIds)', { docIds: opt.docIds });
     }
@@ -255,21 +263,8 @@ export class DocumentService implements OnModuleInit {
   }
 
   private async queryDocuments(opt: QueryDocumentsOptions): Promise<{ docs: Document[]; total: number }> {
-    let docIds = opt.docIds ? [...opt.docIds] : undefined;
-    if (opt.categoryIds && opt.categoryIds.length > 0) {
-      const cates = await this.docCateRepo.find({
-        where: { category_id: In(opt.categoryIds) },
-        select: ['document_id'],
-      });
-      const cids = [...new Set(cates.map((c) => Number(c.document_id)))];
-      if (cids.length === 0) return { docs: [], total: 0 };
-      docIds = docIds ? docIds.filter((id) => cids.includes(id)) : cids;
-      if (docIds.length === 0) return { docs: [], total: 0 };
-    }
-
-    const finalOpt: QueryDocumentsOptions = { ...opt, docIds };
     const qb = this.docRepo.createQueryBuilder('d');
-    this.buildQuery(qb, finalOpt);
+    this.buildQuery(qb, opt);
 
     if (opt.recycle) {
       qb.orderBy('d.deleted_at', 'DESC').addOrderBy('d.id', 'DESC');
@@ -280,8 +275,14 @@ export class DocumentService implements OnModuleInit {
 
     qb.skip((opt.page - 1) * opt.size).take(opt.size);
 
+    // 不需要总数时跳过 COUNT 查询
+    if (!opt.withCount) {
+      const docs = await qb.getMany();
+      return { docs, total: 0 };
+    }
+
     const [docs, total] = await qb.getManyAndCount();
-    return { docs, total: opt.withCount ? total : 0 };
+    return { docs, total };
   }
 
   private async enrichDocuments(

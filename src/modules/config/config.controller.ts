@@ -40,8 +40,13 @@ interface UpdateConfigBody {
   config?: Array<{ id?: number; name?: string; value?: string; category?: string }>;
 }
 
+/** /stats 统计缓存有效期（毫秒） */
+const STATS_TTL_MS = 30 * 1000;
+
 @Controller()
 export class ConfigController {
+  private readonly statsCache = new Map<string, { at: number; value: Record<string, number> }>();
+
   constructor(
     @InjectRepository(Config)
     private readonly configRepo: Repository<Config>,
@@ -83,14 +88,9 @@ export class ConfigController {
   @Public()
   @Get('settings')
   async getSettings() {
-    const rows = await this.configRepo.find();
-    const byCategory = (category: string): Record<string, string> => {
-      const map: Record<string, string> = {};
-      for (const row of rows) {
-        if (row.category === category) map[row.name] = row.value ?? '';
-      }
-      return map;
-    };
+    // 直接复用 ConfigService 的内存缓存（启动时全量加载、后台保存配置后自动重载）
+    const byCategory = (category: string): Record<string, string> =>
+      this.configService.getCategory(category);
 
     const system = byCategory('system');
     const footer = byCategory('footer');
@@ -295,42 +295,49 @@ export class ConfigController {
   @Public()
   @Get('stats')
   async getStats(@CurrentUser() user?: JwtUser) {
-    const [userCount, documentCount, articleCount] = await Promise.all([
-      this.userRepo.count(),
-      this.documentRepo.count(),
-      this.articleRepo.count(),
-    ]);
-
-    const virtualRow = await this.configRepo.findOne({
-      where: { category: 'display', name: 'virtual_register_count' },
+    // 统计数字非强实时，做 30 秒内存缓存，避免每次请求都跑 COUNT(*)
+    const base = await this.cachedCounts('base', async () => {
+      const [userCount, documentCount, articleCount] = await Promise.all([
+        this.userRepo.count(),
+        this.documentRepo.count(),
+        this.articleRepo.count(),
+      ]);
+      return { userCount, documentCount, articleCount };
     });
-    const virtualCount = parseInt(virtualRow?.value ?? '0', 10) || 0;
 
-    let categoryCount = 0;
-    let commentCount = 0;
-    let bannerCount = 0;
-    let friendlinkCount = 0;
-    let reportCount = 0;
+    // 虚拟注册数来自后台配置（内存缓存，保存后立即生效）
+    const virtualCount = this.configService.getInt('display', 'virtual_register_count', 0);
+
+    let adminCounts = {
+      categoryCount: 0,
+      commentCount: 0,
+      bannerCount: 0,
+      friendlinkCount: 0,
+      reportCount: 0,
+    };
     if (await this.hasAccess(user, '/api.v1.ConfigAPI/GetStats')) {
-      [categoryCount, commentCount, bannerCount, friendlinkCount, reportCount] =
-        await Promise.all([
-          this.categoryRepo.count(),
-          this.commentRepo.count(),
-          this.bannerRepo.count(),
-          this.friendlinkRepo.count(),
-          this.reportRepo.count(),
-        ]);
+      adminCounts = await this.cachedCounts('admin', async () => {
+        const [categoryCount, commentCount, bannerCount, friendlinkCount, reportCount] =
+          await Promise.all([
+            this.categoryRepo.count(),
+            this.commentRepo.count(),
+            this.bannerRepo.count(),
+            this.friendlinkRepo.count(),
+            this.reportRepo.count(),
+          ]);
+        return { categoryCount, commentCount, bannerCount, friendlinkCount, reportCount };
+      });
     }
 
     return {
-      user_count: userCount + virtualCount,
-      document_count: documentCount,
-      category_count: categoryCount,
-      article_count: articleCount,
-      comment_count: commentCount,
-      banner_count: bannerCount,
-      friendlink_count: friendlinkCount,
-      report_count: reportCount,
+      user_count: base.userCount + virtualCount,
+      document_count: base.documentCount,
+      category_count: adminCounts.categoryCount,
+      article_count: base.articleCount,
+      comment_count: adminCounts.commentCount,
+      banner_count: adminCounts.bannerCount,
+      friendlink_count: adminCounts.friendlinkCount,
+      report_count: adminCounts.reportCount,
       os: `${os.type()} ${os.release()} ${os.arch()}`,
       version: APP_VERSION,
       hash: APP_HASH,
@@ -529,6 +536,19 @@ export class ConfigController {
   private async hasAccess(user: JwtUser | undefined, method: string): Promise<boolean> {
     if (!user) return false;
     return this.permissionService.check(user.userId, method);
+  }
+
+  /** 统计数字的短时缓存，key 维度：base（前台可见）/ admin（需权限） */
+  private async cachedCounts<T extends Record<string, number>>(
+    key: string,
+    loader: () => Promise<T>,
+  ): Promise<T> {
+    const now = Date.now();
+    const hit = this.statsCache.get(key);
+    if (hit && now - hit.at < STATS_TTL_MS) return hit.value as T;
+    const value = await loader();
+    this.statsCache.set(key, { at: now, value });
+    return value;
   }
 
   private async getReleaseInfo(): Promise<Record<string, string>> {
