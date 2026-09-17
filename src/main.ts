@@ -31,6 +31,16 @@ async function bootstrap() {
     allowedHeaders: ['Content-Type', 'Authorization'],
   });
 
+  // 禁止 CDN 缓存 CORS 预检响应。否则 EdgeOne 等边缘缓存可能命中一个缺失
+  // Access-Control-Allow-Origin 头的 OPTIONS 响应，导致浏览器间歇性跨域失败。
+  app.use((req, res, next) => {
+    if (req.method === 'OPTIONS') {
+      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+      res.setHeader('Pragma', 'no-cache');
+    }
+    next();
+  });
+
   // 静态资源目录（上传的图片等），运行时自动创建并暴露给前端访问
   const uploadsDir = path.resolve(process.cwd(), env.uploadDir);
   const documentsDir = path.resolve(process.cwd(), env.documentDir);

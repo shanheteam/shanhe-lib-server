@@ -1,19 +1,34 @@
-import { Controller, Get, Param, Query, Res } from '@nestjs/common';
+import { Controller, Get, Logger, Param, Query, Res } from '@nestjs/common';
 import { Response } from 'express';
+import * as path from 'path';
 import { AttachmentService } from './attachment.service';
+import { OssService, contentTypeOf } from './oss.service';
 import { Public } from '../../common/decorators/public.decorator';
+
+/** 构造 Content-Disposition 响应头（RFC 5987），保留中文文件名。 */
+function buildContentDisposition(filename: string): string {
+  const ascii = filename.replace(/[^\x20-\x7e]/g, '_');
+  const encoded = encodeURIComponent(filename).replace(/'/g, '%27');
+  return `attachment; filename="${ascii}"; filename*=UTF-8''${encoded}`;
+}
 
 /**
  * 文档预览 / 下载 / favicon 文件路由（不挂载 api/v1 前缀）。
  * 与原版 gin 原生路由 /view/*、/download/:jwt、/favicon.ico 保持一致。
+ * OSS 启用时：预览/封面/下载「OSS 优先、本地兜底」。
  */
 @Controller()
 export class FileController {
-  constructor(private readonly service: AttachmentService) {}
+  private readonly logger = new Logger(FileController.name);
+
+  constructor(
+    private readonly service: AttachmentService,
+    private readonly ossService: OssService,
+  ) {}
 
   @Public()
   @Get('view/page/:hash/:page')
-  viewPage(
+  async viewPage(
     @Param('hash') hash: string,
     @Param('page') page: string,
     @Res() res: Response,
@@ -22,19 +37,50 @@ export class FileController {
       return res.status(404).json({ code: 400, message: 'hash值必须32位' });
     }
     const safePage = (page || '').replace(/^[./]+/, '');
-    if (safePage.endsWith('.svg')) {
-      if (safePage.endsWith('.gzip.svg')) res.setHeader('Content-Encoding', 'gzip');
-      res.setHeader('Content-Type', 'image/svg+xml');
+    const isGzip = safePage.endsWith('.gzip.svg');
+    const contentType = safePage.endsWith('.svg')
+      ? 'image/svg+xml'
+      : contentTypeOf(path.extname(safePage));
+
+    if (this.ossService.isEnabled()) {
+      try {
+        const key = OssService.pageKey(hash, safePage);
+        if (await this.ossService.exists(key)) {
+          const buf = await this.ossService.get(key);
+          if (isGzip) res.setHeader('Content-Encoding', 'gzip');
+          res.setHeader('Content-Type', contentType);
+          return res.end(buf);
+        }
+      } catch (e) {
+        this.logger.warn(`OSS 预览读取失败，回退本地：${(e as Error).message}`);
+      }
     }
+
+    if (isGzip) res.setHeader('Content-Encoding', 'gzip');
+    res.setHeader('Content-Type', contentType);
     return res.sendFile(this.service.resolvePagePath(hash, safePage));
   }
 
   @Public()
   @Get('view/cover/:hash')
-  viewCover(@Param('hash') hash: string, @Res() res: Response) {
+  async viewCover(@Param('hash') hash: string, @Res() res: Response) {
     if (!hash || hash.length !== 32) {
       return res.status(404).json({ code: 400, message: 'hash值必须32位' });
     }
+
+    if (this.ossService.isEnabled()) {
+      try {
+        const key = OssService.coverKey(hash);
+        if (await this.ossService.exists(key)) {
+          const buf = await this.ossService.get(key);
+          res.setHeader('Content-Type', 'image/png');
+          return res.end(buf);
+        }
+      } catch (e) {
+        this.logger.warn(`OSS 封面读取失败，回退本地：${(e as Error).message}`);
+      }
+    }
+
     return res.sendFile(this.service.resolveCoverPath(hash));
   }
 
@@ -57,6 +103,22 @@ export class FileController {
       return res.status(400).send('下载链接已失效');
     }
     const filename = String(query.filename ?? '');
+
+    if (this.ossService.isEnabled()) {
+      try {
+        const key = OssService.documentKey(claims.hash, path.extname(filename));
+        if (await this.ossService.exists(key)) {
+          const url = await this.ossService.signedUrl(key, {
+            expires: 60,
+            responseContentDisposition: buildContentDisposition(filename),
+          });
+          return res.redirect(302, url);
+        }
+      } catch (e) {
+        this.logger.warn(`OSS 下载准备失败，回退本地：${(e as Error).message}`);
+      }
+    }
+
     const file = this.service.resolveDownloadPath(claims.hash, filename);
     return res.download(file, filename);
   }

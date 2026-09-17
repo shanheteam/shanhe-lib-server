@@ -23,6 +23,7 @@ import {
 } from '../../entities';
 import { ConfigService } from '../../config/config.service';
 import { ConverterService } from '../converter/converter.service';
+import { OssService, contentTypeOf } from '../attachment/oss.service';
 import { Biz } from '../../common/biz.exception';
 
 export const DocumentStatus = {
@@ -117,6 +118,7 @@ export class DocumentService implements OnModuleInit {
     private readonly userGroupRepo: Repository<UserGroup>,
     private readonly config: ConfigService,
     private readonly converter: ConverterService,
+    private readonly ossService: OssService,
     private readonly jwtService: JwtService,
   ) {}
 
@@ -1309,7 +1311,10 @@ export class DocumentService implements OnModuleInit {
     if (this.converting) return;
     this.converting = true;
     try {
-      await this.convertNextDocument();
+      // 优先处理待转换文档；无待转换任务时，尝试迁移存量本地文档到 OSS
+      if (!(await this.convertNextDocument())) {
+        await this.migrateNextDocument();
+      }
     } catch (e) {
       this.logger.error(`转换 worker 异常：${(e as Error).message}`);
     } finally {
@@ -1317,13 +1322,46 @@ export class DocumentService implements OnModuleInit {
     }
   }
 
-  private async convertNextDocument(): Promise<void> {
+  private async convertNextDocument(): Promise<boolean> {
     const doc = await this.docRepo.findOne({
       where: { status: In([DocumentStatus.Pending, DocumentStatus.RePending]) },
       order: { id: 'ASC' },
     });
-    if (!doc) return;
+    if (!doc) return false;
     await this.handleDocument(doc);
+    return true;
+  }
+
+  /** 存量迁移：将已转换但仅存本地的文档附件（原文件+预览页+封面）上传到 OSS 并清理本地。 */
+  private async migrateNextDocument(): Promise<void> {
+    if (!this.ossService.isEnabled()) return;
+    const attachment = await this.attachmentRepo
+      .createQueryBuilder('a')
+      .innerJoin(Document, 'd', 'd.id = a.type_id')
+      .where('a.type = :type', { type: AttachmentTypeDocument })
+      .andWhere('a.path NOT LIKE :http', { http: 'http%' })
+      .andWhere('d.status = :status', { status: DocumentStatus.Converted })
+      .andWhere('d.deleted_at IS NULL')
+      .orderBy('a.id', 'ASC')
+      .take(1)
+      .getOne();
+    if (!attachment) return;
+
+    const hash = String(attachment.hash || '');
+    const ext = String(attachment.ext || '').toLowerCase();
+    const relPath = String(attachment.path || '').replace(/^\/+/, '');
+    if (!hash || !relPath) {
+      this.logger.warn(`存量迁移跳过（attachment_id=${attachment.id}）：附件路径或 hash 无效`);
+      return;
+    }
+    const srcPath = path.resolve(process.cwd(), relPath);
+    if (!fs.existsSync(srcPath)) {
+      this.logger.warn(`存量迁移跳过（attachment_id=${attachment.id}）：本地原文件不存在`);
+      return;
+    }
+    const srcExt = path.extname(srcPath);
+    const baseDir = srcPath.slice(0, srcPath.length - srcExt.length);
+    await this.uploadDocumentFilesToOss(attachment, srcPath, baseDir);
   }
 
   private async handleDocument(doc: Document): Promise<void> {
@@ -1341,16 +1379,34 @@ export class DocumentService implements OnModuleInit {
       return;
     }
 
+    const hash = String(attachment.hash || '');
+    const ext = String(attachment.ext || '').toLowerCase();
+    const ossEnabled = this.ossService.isEnabled();
+    const workspace = this.makeWorkspace();
+
+    // 定位本地原文件；若本地缺失（如 OSS 上传后本地已清理、再次重新转换），从 OSS 下载到工作区
     const relPath = String(attachment.path || '').replace(/^\/+/, '');
     const srcPath = path.resolve(process.cwd(), relPath);
+    let localSrc = srcPath;
     if (!relPath || !fs.existsSync(srcPath)) {
-      await this.docRepo.update(documentId, { status: DocumentStatus.Failed });
-      await this.setConvertError(documentId, new Error('文档原文件不存在'));
-      return;
+      if (!ossEnabled || !hash) {
+        await this.docRepo.update(documentId, { status: DocumentStatus.Failed });
+        await this.setConvertError(documentId, new Error('文档原文件不存在'));
+        return;
+      }
+      try {
+        const buf = await this.ossService.get(OssService.documentKey(hash, ext));
+        localSrc = path.join(workspace, `${hash}${ext}`);
+        fs.writeFileSync(localSrc, buf);
+      } catch (e) {
+        await this.docRepo.update(documentId, { status: DocumentStatus.Failed });
+        await this.setConvertError(documentId, new Error(`从 OSS 下载原文件失败：${(e as Error).message}`));
+        return;
+      }
     }
 
-    const srcExt = path.extname(srcPath);
-    const baseDir = srcPath.slice(0, srcPath.length - srcExt.length);
+    const srcExt = path.extname(localSrc);
+    const baseDir = localSrc.slice(0, localSrc.length - srcExt.length);
     const coverPath = path.join(baseDir, 'cover.png');
     fs.mkdirSync(baseDir, { recursive: true });
 
@@ -1359,9 +1415,8 @@ export class DocumentService implements OnModuleInit {
     const cfgMaxPreview = this.config.getInt('converter', 'max_preview', 0);
     const cfgMaxPercent = this.config.getInt('converter', 'max_preview_percent', 100);
 
-    const workspace = this.makeWorkspace();
     try {
-      const dstPDF = await this.converter.convertToPDF(srcPath, workspace);
+      const dstPDF = await this.converter.convertToPDF(localSrc, workspace);
       const pages = await this.converter.countPDFPages(dstPDF);
       if (pages <= 0) throw new Error('统计PDF页数失败');
 
@@ -1378,13 +1433,13 @@ export class DocumentService implements OnModuleInit {
       if (maxPreview > 0) toPage = maxPreview;
       if (toPage > pages && pages > 0) toPage = pages;
 
-      const ext = `.${cfgExtension}`;
-      const pageList = await this.converter.convertPDFToPages(dstPDF, workspace, 1, toPage, ext);
+      const ext2 = `.${cfgExtension}`;
+      const pageList = await this.converter.convertPDFToPages(dstPDF, workspace, 1, toPage, ext2);
       if (!pageList || pageList.length === 0) throw new Error('文档预览页转换失败');
 
       const isSvg = cfgExtension === 'svg';
       const gzipExt = isSvg && cfgEnableGzip;
-      const finalExt = gzipExt ? '.gzip.svg' : ext;
+      const finalExt = gzipExt ? '.gzip.svg' : ext2;
 
       // 生成封面（取第一页）
       if (pageList.length > 0) {
@@ -1406,12 +1461,17 @@ export class DocumentService implements OnModuleInit {
         }
       }
 
+      // 转换成功后：原文件 + 预览页 + 封面上传 OSS，成功后清理本地；失败自动回退本地
+      if (ossEnabled && hash) {
+        await this.uploadDocumentFilesToOss(attachment, localSrc, baseDir);
+      }
+
       await this.docRepo.update(documentId, {
         pages,
         preview,
         status: DocumentStatus.Converted,
         enable_gzip: gzipExt,
-        preview_ext: isSvg ? '.svg' : ext,
+        preview_ext: isSvg ? '.svg' : ext2,
         updated_at: new Date(),
       });
       await this.clearConvertError(documentId);
@@ -1421,6 +1481,86 @@ export class DocumentService implements OnModuleInit {
       await this.setConvertError(documentId, e as Error);
     } finally {
       this.cleanup(workspace);
+    }
+  }
+
+  /**
+   * 将文档本地文件（原文件 + 预览页 + 封面）上传到 OSS。
+   * 全部成功后：更新附件 path 为 OSS 外链，再清理本地文件；任一失败则保留本地（自动回退）。
+   */
+  private async uploadDocumentFilesToOss(
+    attachment: Attachment,
+    srcPath: string,
+    baseDir: string,
+  ): Promise<void> {
+    const hash = String(attachment.hash || '');
+    const ext = String(attachment.ext || '').toLowerCase();
+    if (!hash) return;
+
+    const coverPath = path.join(baseDir, 'cover.png');
+    const uploads: Array<{
+      key: string;
+      file: string;
+      contentType: string;
+      contentEncoding?: string;
+    }> = [];
+
+    if (fs.existsSync(srcPath)) {
+      uploads.push({
+        key: OssService.documentKey(hash, ext),
+        file: srcPath,
+        contentType: contentTypeOf(ext),
+      });
+    }
+    if (fs.existsSync(baseDir)) {
+      for (const f of fs.readdirSync(baseDir)) {
+        const abs = path.join(baseDir, f);
+        let stat: fs.Stats;
+        try {
+          stat = fs.statSync(abs);
+        } catch {
+          continue;
+        }
+        if (!stat.isFile() || f.toLowerCase() === 'cover.png') continue;
+        const lower = f.toLowerCase();
+        const gzip = lower.endsWith('.gzip.svg');
+        uploads.push({
+          key: OssService.pageKey(hash, f),
+          file: abs,
+          contentType: gzip ? 'image/svg+xml' : contentTypeOf(path.extname(f)),
+          contentEncoding: gzip ? 'gzip' : undefined,
+        });
+      }
+    }
+    if (fs.existsSync(coverPath)) {
+      uploads.push({ key: OssService.coverKey(hash), file: coverPath, contentType: 'image/png' });
+    }
+    if (uploads.length === 0) return;
+
+    try {
+      for (const u of uploads) {
+        await this.ossService.put(
+          u.key,
+          fs.readFileSync(u.file),
+          u.contentType,
+          u.contentEncoding ? { contentEncoding: u.contentEncoding } : {},
+        );
+      }
+      // 全部成功：先更新附件外链，再清理本地文件
+      await this.attachmentRepo.update(attachment.id, {
+        path: this.ossService.buildUrl(OssService.documentKey(hash, ext)),
+        updated_at: new Date(),
+      });
+      const documentsAbs = path.resolve(process.cwd(), 'documents');
+      try {
+        if (fs.existsSync(srcPath)) fs.unlinkSync(srcPath);
+        if (baseDir.startsWith(documentsAbs)) fs.rmSync(baseDir, { recursive: true, force: true });
+      } catch (e) {
+        this.logger.warn(`清理本地文件失败：${(e as Error).message}`);
+      }
+      this.logger.log(`文档附件已上传 OSS（attachment_id=${attachment.id}, hash=${hash.slice(0, 8)}…）`);
+    } catch (e) {
+      this.logger.warn(`文档 OSS 上传失败，回退本地存储（attachment_id=${attachment.id}）：${(e as Error).message}`);
     }
   }
 }

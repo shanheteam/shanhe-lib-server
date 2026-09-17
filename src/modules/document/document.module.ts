@@ -17,6 +17,7 @@ import {
   UserGroup,
 } from '../../entities';
 import { ConverterModule } from '../converter/converter.module';
+import { AttachmentModule } from '../attachment/attachment.module';
 import { DocumentService } from './document.service';
 import { DocumentController } from './document.controller';
 
@@ -39,6 +40,7 @@ import { DocumentController } from './document.controller';
     ]),
     JwtModule.register({}),
     ConverterModule,
+    AttachmentModule,
   ],
   controllers: [DocumentController],
   providers: [DocumentService],
