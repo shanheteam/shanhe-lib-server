@@ -24,6 +24,7 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { Biz } from '../../common/biz.exception';
 import { PermissionService } from '../../auth/permission.service';
 import { ConfigService } from '../../config/config.service';
+import { MailService } from '../mail/mail.service';
 import { assertSafeOutboundUrl } from '../../common/url-guard.util';
 import { JwtUser } from '../../auth/jwt-user.type';
 
@@ -35,6 +36,18 @@ const APP_BUILD_AT = process.env.MOREDOC_BUILD_AT || '';
 interface ListConfigQuery {
   category?: string | string[];
 }
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+/** 后台"检测邮箱"允许用表单值覆盖的 email 配置项 */
+const EMAIL_TEST_FIELDS = [
+  'host',
+  'port',
+  'is_tls',
+  'from_name',
+  'username',
+  'password',
+];
 
 interface UpdateConfigBody {
   config?: Array<{ id?: number; name?: string; value?: string; category?: string }>;
@@ -70,6 +83,7 @@ export class ConfigController {
     private readonly reportRepo: Repository<Report>,
     private readonly permissionService: PermissionService,
     private readonly configService: ConfigService,
+    private readonly mailService: MailService,
     private readonly dataSource: DataSource,
   ) {
     // 定时自动重建 sitemap：启动 5 分钟后首次生成，之后每天生成一次（兜底，手动按钮仍可用）
@@ -235,7 +249,45 @@ export class ConfigController {
     }
 
     await this.configService.reload();
+
+    // email 分类变更且填写了测试邮箱时，保存后自动发一封测试邮件，
+    // 让管理员在保存时就能确认配置是否可用（失败不影响保存结果，只回传原因）
+    const emailChanged = configs.some((cfg) => cfg.category === 'email');
+    const testEmail = this.configService.get('email', 'test_email').trim();
+    if (
+      emailChanged &&
+      testEmail &&
+      this.configService.getBool('email', 'enable')
+    ) {
+      const mail = this.buildTestMail();
+      try {
+        await this.mailService.send(testEmail, mail.subject, mail.html);
+        return {
+          email_test: {
+            success: true,
+            message: `已向测试邮箱 ${testEmail} 发送测试邮件，请查收`,
+          },
+        };
+      } catch (err: any) {
+        return {
+          email_test: {
+            success: false,
+            message: `测试邮件发送失败：${err?.message || String(err)}`,
+          },
+        };
+      }
+    }
+
     return {};
+  }
+
+  /** 测试邮件内容（检测邮箱与保存配置两处共用） */
+  private buildTestMail(): { subject: string; html: string } {
+    const title = this.configService.get('system', 'title') || '本站';
+    return {
+      subject: `【${title}】邮件服务测试`,
+      html: `<p>这是一封来自【${title}】的测试邮件。</p><p>收到本邮件说明邮件服务配置可用，发送时间：${new Date().toLocaleString('zh-CN')}。</p>`,
+    };
   }
 
   @Get('release')
@@ -530,6 +582,59 @@ export class ConfigController {
       };
     } finally {
       clearTimeout(timer);
+    }
+  }
+
+  /**
+   * 检测邮箱：用表单里的最新值（未修改的密码项沿用已保存值）校验 SMTP 连接与账号密码，
+   * 填写了测试邮箱时再真实投递一封测试邮件。
+   */
+  @RequirePermission('/api.v1.ConfigAPI/UpdateConfig')
+  @Post('config/email-test')
+  async testEmailConfig(
+    @Body()
+    body: {
+      test_email?: string;
+      config?: Array<{ name?: string; value?: string; category?: string }>;
+    },
+  ) {
+    const overrides: Record<string, string> = {};
+    for (const item of body?.config ?? []) {
+      const name = String(item?.name ?? '');
+      if (!EMAIL_TEST_FIELDS.includes(name)) continue;
+      const value = item?.value ?? '';
+      // 密码未修改时前端会回传掩码，此时沿用数据库里已保存的值
+      if (name === 'password' && value === '******') continue;
+      overrides[name] = value;
+    }
+
+    const to = String(body?.test_email ?? '').trim();
+    const startedAt = Date.now();
+    try {
+      const cfg = await this.mailService.verify(overrides);
+      if (!to) {
+        return {
+          status: 200,
+          cost: Date.now() - startedAt,
+          message: `SMTP 连接与账号密码校验通过（${cfg.host}:${cfg.port}）。如需确认能否收信，请填写测试邮箱后再检测。`,
+        };
+      }
+      if (!EMAIL_RE.test(to)) {
+        return { status: 0, message: `测试邮箱格式不正确：${to}` };
+      }
+      const mail = this.buildTestMail();
+      await this.mailService.send(to, mail.subject, mail.html, overrides);
+      return {
+        status: 200,
+        cost: Date.now() - startedAt,
+        message: `测试邮件已发送至 ${to}，请查收（若未收到请检查垃圾邮件箱）`,
+      };
+    } catch (err: any) {
+      return {
+        status: 0,
+        cost: Date.now() - startedAt,
+        message: err?.message || String(err),
+      };
     }
   }
 

@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
 import {
@@ -19,6 +19,7 @@ import { ConfigService } from '../../config/config.service';
 import { AuthService } from '../../auth/auth.service';
 import { PermissionService } from '../../auth/permission.service';
 import { CaptchaService } from '../captcha/captcha.service';
+import { MailService } from '../mail/mail.service';
 import { JwtUser } from '../../auth/jwt-user.type';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -111,6 +112,8 @@ interface SendEmailCodeBody {
 
 @Injectable()
 export class UserService {
+  private readonly logger = new Logger(UserService.name);
+
   constructor(
     @InjectRepository(User)
     private readonly userRepo: Repository<User>,
@@ -136,6 +139,7 @@ export class UserService {
     private readonly auth: AuthService,
     private readonly permissionService: PermissionService,
     private readonly captcha: CaptchaService,
+    private readonly mail: MailService,
   ) {}
 
   // ---------- 工具方法 ----------
@@ -209,6 +213,27 @@ export class UserService {
     return Number(`${now.getFullYear()}${mm}${dd}`);
   }
 
+  /** 验证码对应的业务动作名称，用于邮件标题与正文 */
+  private emailCodeAction(codeType: number): string {
+    switch (codeType) {
+      case EMAIL_CODE_LOGIN:
+        return '登录';
+      case EMAIL_CODE_FIND_PASSWORD:
+        return '找回密码';
+      default:
+        return '注册';
+    }
+  }
+
+  private buildEmailCodeHtml(code: string, action: string, siteName: string): string {
+    const duration = this.config.getInt('email', 'duration', 30);
+    return [
+      `<p>您正在【${siteName}】进行${action}，验证码为：</p>`,
+      `<p style="font-size:24px;font-weight:bold;letter-spacing:4px;">${code}</p>`,
+      `<p>验证码 ${duration} 分钟内有效，请勿泄露给他人。</p>`,
+    ].join('');
+  }
+
   private async sendCodeAndStore(
     email: string,
     codeType: number,
@@ -218,19 +243,41 @@ export class UserService {
       throw Biz.invalidArgument('未配置邮箱服务');
     }
     const code = randomString(6);
+    const action = this.emailCodeAction(codeType);
+    const siteName = this.config.get('system', 'title') || '本站';
+
+    // 真实投递验证码邮件：失败时把原因落库并直接告知用户，避免"提示成功却收不到邮件"
+    let success = true;
+    let error = '';
+    try {
+      await this.mail.send(
+        email,
+        `【${siteName}】${action}验证码`,
+        this.buildEmailCodeHtml(code, action, siteName),
+      );
+    } catch (err: any) {
+      success = false;
+      error = err?.message || String(err);
+      this.logger.error(`发送${action}验证码到 ${email} 失败：${error}`);
+    }
+
     await this.emailCodeRepo.save(
       this.emailCodeRepo.create({
         email,
         ip: ip || '',
         code,
         code_type: codeType,
-        success: true,
-        error: '',
+        success,
+        error,
         is_used: false,
         created_at: new Date(),
         updated_at: new Date(),
       }),
     );
+
+    if (!success) {
+      throw Biz.invalidArgument(`${action}验证码发送失败：${error}`);
+    }
   }
 
   // ---------- 注册 / 登录 ----------

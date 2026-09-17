@@ -6,6 +6,7 @@ import { AppThrottlerGuard } from './common/throttler.guard';
 import { dataSourceOptions } from './database/data-source';
 import { AuthModule } from './auth/auth.module';
 import { ConfigModule } from './config/config.module';
+import { MailModule } from './modules/mail/mail.module';
 import { ConverterModule } from './modules/converter/converter.module';
 import { CaptchaModule } from './modules/captcha/captcha.module';
 import { HealthModule } from './modules/health/health.module';
@@ -44,6 +45,7 @@ import { OauthModule } from './modules/oauth/oauth.module';
     TypeOrmModule.forRoot(dataSourceOptions),
     AuthModule,
     ConfigModule,
+    MailModule,
     ConverterModule,
     CaptchaModule,
     HealthModule,
