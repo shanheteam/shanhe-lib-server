@@ -14,7 +14,20 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { JwtUser } from '../../auth/jwt-user.type';
 import { Biz } from '../../common/biz.exception';
 
-const FILE_OPTIONS = { storage: memoryStorage() };
+// 上传体积上限：文档较大，图片与编辑器资源较小；均限制单文件以阻断超大请求打满内存
+const MB = 1024 * 1024;
+const documentOptions = {
+  storage: memoryStorage(),
+  limits: { fileSize: 200 * MB, files: 1, fields: 10 },
+};
+const imageOptions = {
+  storage: memoryStorage(),
+  limits: { fileSize: 10 * MB, files: 1, fields: 10 },
+};
+const articleOptions = {
+  storage: memoryStorage(),
+  limits: { fileSize: 50 * MB, files: 1, fields: 10 },
+};
 
 /**
  * 文件上传控制器。
@@ -33,7 +46,7 @@ export class UploadController {
 
   @RequireLogin()
   @Post('document')
-  @UseInterceptors(FileInterceptor('file', FILE_OPTIONS))
+  @UseInterceptors(FileInterceptor('file', documentOptions))
   uploadDocument(
     @UploadedFile() file: Express.Multer.File,
     @Ip() ip: string,
@@ -44,7 +57,7 @@ export class UploadController {
 
   @RequireLogin()
   @Post('avatar')
-  @UseInterceptors(FileInterceptor('file', FILE_OPTIONS))
+  @UseInterceptors(FileInterceptor('file', imageOptions))
   uploadAvatar(
     @UploadedFile() file: Express.Multer.File,
     @Ip() ip: string,
@@ -55,7 +68,7 @@ export class UploadController {
 
   @RequireLogin()
   @Post('config')
-  @UseInterceptors(FileInterceptor('file', FILE_OPTIONS))
+  @UseInterceptors(FileInterceptor('file', imageOptions))
   async uploadConfig(
     @UploadedFile() file: Express.Multer.File,
     @Ip() ip: string,
@@ -67,7 +80,7 @@ export class UploadController {
 
   @RequireLogin()
   @Post('banner')
-  @UseInterceptors(FileInterceptor('file', FILE_OPTIONS))
+  @UseInterceptors(FileInterceptor('file', imageOptions))
   async uploadBanner(
     @UploadedFile() file: Express.Multer.File,
     @Ip() ip: string,
@@ -79,7 +92,7 @@ export class UploadController {
 
   @RequireLogin()
   @Post('category')
-  @UseInterceptors(FileInterceptor('file', FILE_OPTIONS))
+  @UseInterceptors(FileInterceptor('file', imageOptions))
   async uploadCategory(
     @UploadedFile() file: Express.Multer.File,
     @Ip() ip: string,
@@ -91,7 +104,7 @@ export class UploadController {
 
   @RequireLogin()
   @Post('article')
-  @UseInterceptors(FileInterceptor('file', FILE_OPTIONS))
+  @UseInterceptors(FileInterceptor('file', articleOptions))
   async uploadArticle(
     @UploadedFile() file: Express.Multer.File,
     @Query('type') type: string,

@@ -13,6 +13,7 @@ import {
 import { RequireLogin } from '../../common/decorators/require-login.decorator';
 import { RequirePermission } from '../../common/decorators/permission.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { Throttle } from '@nestjs/throttler';
 import { JwtUser } from '../../auth/jwt-user.type';
 import { UserService } from './user.service';
 import { toNumberArray } from '../../common/query.util';
@@ -21,11 +22,13 @@ import { toNumberArray } from '../../common/query.util';
 export class UserController {
   constructor(private readonly userService: UserService) {}
 
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @Post('register')
   register(@Body() body: any, @Ip() ip: string) {
     return this.userService.register(body, ip);
   }
 
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @Post('login')
   login(@Body() body: any, @Ip() ip: string) {
     return this.userService.login(body, ip);
@@ -84,6 +87,7 @@ export class UserController {
     return this.userService.listUser(query);
   }
 
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
   @Get('captcha')
   getUserCaptcha(@Query('type') type: string) {
     return this.userService.getUserCaptcha(type);
@@ -139,16 +143,19 @@ export class UserController {
     return this.userService.listUserGroup(user);
   }
 
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @Post('findpassword/stepone')
   findPasswordStepOne(@Body() body: any, @Ip() ip: string) {
     return this.userService.findPasswordStepOne(body, ip);
   }
 
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @Put('findpassword/steptwo')
   findPasswordStepTwo(@Body() body: any) {
     return this.userService.findPasswordStepTwo(body);
   }
 
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @Post('email/code')
   sendEmailCode(@Body() body: any, @Ip() ip: string) {
     return this.userService.sendEmailCode(body, ip);

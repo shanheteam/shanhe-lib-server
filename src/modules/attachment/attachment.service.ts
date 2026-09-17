@@ -33,6 +33,12 @@ const ATTACHMENT_TYPE_NAME: Record<number, string> = {
 // 图片扩展名（util/filetil/filetil.go imagesExt）
 const IMAGE_EXTS = new Set(['.jpg', '.jpeg', '.png', '.gif', '.ico', '.bmp', '.webp']);
 
+// 视频扩展名（文章编辑器资源）
+const VIDEO_EXTS = ['.mp4', '.webm', '.ogg', '.ogv', '.mov', '.m4v', '.avi', '.mkv', '.flv', '.wmv'];
+
+// 文章编辑器允许的资源类型：图片 + 视频。刻意排除 .svg/.html 等可执行脚本的同源静态资源。
+const ARTICLE_MEDIA_EXTS = new Set([...IMAGE_EXTS, ...VIDEO_EXTS]);
+
 // 文档扩展名（utils/enum.js word/excel/ppt/pdf/text/other）
 const DOCUMENT_EXTS = new Set([
   '.doc', '.docx', '.rtf', '.wps', '.odt',
@@ -329,9 +335,15 @@ export class AttachmentService {
     return this.serialize(attachment);
   }
 
-  /** 上传文章编辑器资源（图片/视频），不校验扩展名，返回 wangeditor 结构。 */
+  /** 上传文章编辑器资源（图片/视频），返回 wangeditor 结构。 */
   async uploadArticle(file: Express.Multer.File, ip: string, userId: number): Promise<{ errno: number; msg?: string; data?: { url: string; alt?: string } }> {
     if (!file) return { errno: 1, msg: '缺少上传文件' };
+    // 编辑器资源会以静态文件形式同源访问，必须限定为媒体类型：
+    // 否则上传 .html/.svg 可直接获得同源脚本执行能力（存储型 XSS）。
+    const ext = path.extname(this.decodeOriginalName(file.originalname)).toLowerCase();
+    if (!ARTICLE_MEDIA_EXTS.has(ext)) {
+      return { errno: 1, msg: '仅支持上传图片或视频文件' };
+    }
     const saved = await this.saveFile(file, ip);
     const attachment = await this.createAttachment({ user_id: userId, type: 3, ...saved });
     return { errno: 0, data: { url: attachment.path, alt: attachment.name } };
@@ -441,11 +453,14 @@ export class AttachmentService {
 
   /** 原始文档绝对路径：documents/{h/a/s/h}/{hash}{extname(filename)}。 */
   resolveDownloadPath(hash: string, filename: string): string {
-    return path.resolve(process.cwd(), 'documents', ...hash.slice(0, 5).split(''), `${hash}${path.extname(filename)}`);
+    // filename 来自下载 URL 的 query，可被篡改，必须取 basename 后再取扩展名，
+    // 否则 `a.x/../../../etc/passwd` 这类值会逃出 documents 目录。
+    const ext = path.extname(path.basename(filename));
+    return path.resolve(process.cwd(), 'documents', ...hash.slice(0, 5).split(''), `${hash}${ext}`);
   }
 
   async verifyDownloadToken(token: string): Promise<{ userId: string; hash: string; documentId: string }> {
-    const secret = this.configService.get('download', 'secret_key', 'moredoc');
+    const secret = this.configService.getDownloadSecret();
     let payload: Record<string, any>;
     try {
       payload = this.jwtService.verify<Record<string, any>>(token, { secret });

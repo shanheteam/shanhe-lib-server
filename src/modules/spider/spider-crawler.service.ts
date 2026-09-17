@@ -21,6 +21,7 @@ import {
 } from '../../entities';
 import { ConfigService } from '../../config/config.service';
 import { Biz } from '../../common/biz.exception';
+import { assertSafeOutboundUrl } from '../../common/url-guard.util';
 import { DocumentStatus } from '../document/document.service';
 import {
   documentExtOf,
@@ -85,6 +86,9 @@ export class SpiderCrawlerService {
     const timeoutMs = Math.max(3, this.config.getInt('spider', 'timeout', 15)) * 1000;
     const ua = this.config.get('spider', 'user_agent', 'Mozilla/5.0 (compatible; moredoc-spider)');
     const proxy = this.config.get('spider', 'proxy', '');
+
+    // 阻断 SSRF：默认禁止采集内网/回环地址，如需采集内网文库可在后台开启 spider.allow_private_network
+    await assertSafeOutboundUrl(url, this.config.getBool('spider', 'allow_private_network', false));
 
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);

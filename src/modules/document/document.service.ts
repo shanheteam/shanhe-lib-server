@@ -1000,7 +1000,7 @@ export class DocumentService implements OnModuleInit {
   }
 
   private generateDownloadURL(doc: Document, hash: string, documentId: number, userId: number): string {
-    const secretKey = this.config.get('download', 'secret_key', 'moredoc');
+    const secretKey = this.config.getDownloadSecret();
     const urlDuration = this.config.getInt('download', 'url_duration', 60);
     const jti = `${userId}.${hash}.${documentId}`;
     const token = this.jwtService.sign({}, { secret: secretKey, expiresIn: urlDuration, jwtid: jti });

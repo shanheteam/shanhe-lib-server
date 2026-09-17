@@ -14,7 +14,7 @@ import {
   Logout,
 } from '../../entities';
 import { Biz } from '../../common/biz.exception';
-import { checkPassword, makePassword, randomString } from '../../common/password.util';
+import { checkPassword, makePassword, needsRehash, randomString } from '../../common/password.util';
 import { ConfigService } from '../../config/config.service';
 import { AuthService } from '../../auth/auth.service';
 import { PermissionService } from '../../auth/permission.service';
@@ -325,10 +325,15 @@ export class UserService {
       throw Biz.invalidArgument('邮箱或密码不正确');
     }
 
-    await this.userRepo.update(user.id, {
+    const update: Record<string, unknown> = {
       login_at: new Date(),
       last_login_ip: ip || '',
-    });
+    };
+    // 存量 md5 哈希在登录成功后自动升级为 bcrypt，用户无感
+    if (needsRehash(user.password)) {
+      update.password = makePassword(password);
+    }
+    await this.userRepo.update(user.id, update);
 
     const token = this.auth.createToken(Number(user.id));
     const groupIds = await this.getGroupIds(Number(user.id));

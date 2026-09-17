@@ -23,5 +23,6 @@ export const Biz = {
   alreadyExists: (message: string) => new BizException(GRPC_CODE.ALREADY_EXISTS, message),
   permissionDenied: (message: string) => new BizException(GRPC_CODE.PERMISSION_DENIED, message),
   unauthenticated: (message: string) => new BizException(GRPC_CODE.UNAUTHENTICATED, message),
+  resourceExhausted: (message: string) => new BizException(GRPC_CODE.RESOURCE_EXHAUSTED, message),
   internal: (message: string) => new BizException(GRPC_CODE.INTERNAL, message),
 };

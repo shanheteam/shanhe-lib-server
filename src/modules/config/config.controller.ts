@@ -24,6 +24,7 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { Biz } from '../../common/biz.exception';
 import { PermissionService } from '../../auth/permission.service';
 import { ConfigService } from '../../config/config.service';
+import { assertSafeOutboundUrl } from '../../common/url-guard.util';
 import { JwtUser } from '../../auth/jwt-user.type';
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -492,6 +493,8 @@ export class ConfigController {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 10000);
     try {
+      // 阻断 SSRF：该接口由后台传入任意 URL 并回显响应内容
+      await assertSafeOutboundUrl(url);
       const opts: RequestInit = {
         method: method.toUpperCase(),
         signal: controller.signal,

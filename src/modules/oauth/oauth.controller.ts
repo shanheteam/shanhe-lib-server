@@ -8,6 +8,7 @@ import {
 import { Public } from '../../common/decorators/public.decorator';
 import { RequireLogin } from '../../common/decorators/require-login.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { Throttle } from '@nestjs/throttler';
 import { JwtUser } from '../../auth/jwt-user.type';
 import { OauthService } from './oauth.service';
 
@@ -29,6 +30,7 @@ export class OauthController {
   /**
    * OAuth login: exchange code for token, create/match user
    */
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
   @Public()
   @Post('login')
   login(@Body() body: any) {
@@ -38,6 +40,7 @@ export class OauthController {
   /**
    * Bind OAuth account to current logged-in user
    */
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
   @RequireLogin()
   @Post('bind')
   bind(@Body() body: any, @CurrentUser() user: JwtUser) {

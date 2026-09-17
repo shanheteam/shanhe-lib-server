@@ -1,4 +1,5 @@
 import { Controller, Get, Logger, Param, Query, Res } from '@nestjs/common';
+import { SkipThrottle } from '@nestjs/throttler';
 import { Response } from 'express';
 import * as path from 'path';
 import { AttachmentService } from './attachment.service';
@@ -12,12 +13,18 @@ function buildContentDisposition(filename: string): string {
   return `attachment; filename="${ascii}"; filename*=UTF-8''${encoded}`;
 }
 
+/** 附件 hash 为 md5 十六进制，限定格式可避免其被当作路径片段穿越目录。 */
+function isValidHash(hash: string): boolean {
+  return /^[0-9a-f]{32}$/i.test(hash);
+}
+
 /**
  * 文档预览 / 下载 / favicon 文件路由（不挂载 api/v1 前缀）。
  * 与原版 gin 原生路由 /view/*、/download/:jwt、/favicon.ico 保持一致。
  * OSS 启用时：预览/封面/下载「OSS 优先、本地兜底」。
  */
 @Controller()
+@SkipThrottle()
 export class FileController {
   private readonly logger = new Logger(FileController.name);
 
@@ -33,10 +40,15 @@ export class FileController {
     @Param('page') page: string,
     @Res() res: Response,
   ) {
-    if (!hash || hash.length !== 32) {
+    if (!isValidHash(hash)) {
       return res.status(404).json({ code: 400, message: 'hash值必须32位' });
     }
+    // page 为路由参数，但 %2F 会在匹配后被解码，必须彻底拒绝路径分隔符与上跳，
+    // 否则可借助 `a%2f..%2f..%2fetc%2fpasswd` 读取 documents 目录之外的文件。
     const safePage = (page || '').replace(/^[./]+/, '');
+    if (!safePage || safePage.includes('..') || /[\\/]/.test(safePage)) {
+      return res.status(404).json({ code: 400, message: 'page参数不合法' });
+    }
     const isGzip = safePage.endsWith('.gzip.svg');
     const contentType = safePage.endsWith('.svg')
       ? 'image/svg+xml'
@@ -62,7 +74,7 @@ export class FileController {
   @Public()
   @Get('view/cover/:hash')
   async viewCover(@Param('hash') hash: string, @Res() res: Response) {
-    if (!hash || hash.length !== 32) {
+    if (!isValidHash(hash)) {
       return res.status(404).json({ code: 400, message: 'hash值必须32位' });
     }
 

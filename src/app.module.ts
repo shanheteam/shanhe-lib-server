@@ -1,5 +1,8 @@
 import { Module } from '@nestjs/common';
+import { APP_GUARD } from '@nestjs/core';
+import { ThrottlerModule } from '@nestjs/throttler';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { AppThrottlerGuard } from './common/throttler.guard';
 import { dataSourceOptions } from './database/data-source';
 import { AuthModule } from './auth/auth.module';
 import { ConfigModule } from './config/config.module';
@@ -36,6 +39,8 @@ import { OauthModule } from './modules/oauth/oauth.module';
 
 @Module({
   imports: [
+    // 全局限流：默认每 IP 每分钟 600 次；登录、注册等敏感接口按路由单独收紧
+    ThrottlerModule.forRoot([{ name: 'default', ttl: 60_000, limit: 600 }]),
     TypeOrmModule.forRoot(dataSourceOptions),
     AuthModule,
     ConfigModule,
@@ -70,5 +75,6 @@ import { OauthModule } from './modules/oauth/oauth.module';
     PayConfigModule,
     OauthModule,
   ],
+  providers: [{ provide: APP_GUARD, useClass: AppThrottlerGuard }],
 })
 export class AppModule {}
