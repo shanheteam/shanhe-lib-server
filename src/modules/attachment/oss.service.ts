@@ -172,6 +172,8 @@ export class OssService {
 
   /**
    * 生成签名下载 URL。
+   * 配置了自定义域名（oss_domain）时，将默认 OSS 端点 host 替换为自定义域名；
+   * OSS 签名校验的 StringToSign 不含 host，替换后签名仍然有效，浏览器经 CDN/自定义域名访问。
    * @param opts.responseContentDisposition 可选，控制下载时响应头（保留原始文件名，RFC 5987）
    */
   async signedUrl(
@@ -182,6 +184,12 @@ export class OssService {
     if (opts.responseContentDisposition) {
       options.response = { 'content-disposition': opts.responseContentDisposition };
     }
-    return this.client().signatureUrl(remoteKey, options);
+    const url = await this.client().signatureUrl(remoteKey, options);
+    const domain = this.domain();
+    if (!domain) return url;
+    return url.replace(
+      /^https?:\/\/[^/?#]+/,
+      `https://${domain.replace(/^https?:\/\//, '').replace(/\/+$/, '')}`,
+    );
   }
 }
