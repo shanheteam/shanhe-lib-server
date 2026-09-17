@@ -46,10 +46,8 @@ export class FileController {
       try {
         const key = OssService.pageKey(hash, safePage);
         if (await this.ossService.exists(key)) {
-          const buf = await this.ossService.get(key);
-          if (isGzip) res.setHeader('Content-Encoding', 'gzip');
-          res.setHeader('Content-Type', contentType);
-          return res.end(buf);
+          // 预览页已上传 OSS：302 重定向到自定义域名外链，浏览器直接从 CDN/OSS 加载
+          return res.redirect(302, this.ossService.buildUrl(key));
         }
       } catch (e) {
         this.logger.warn(`OSS 预览读取失败，回退本地：${(e as Error).message}`);
@@ -72,9 +70,8 @@ export class FileController {
       try {
         const key = OssService.coverKey(hash);
         if (await this.ossService.exists(key)) {
-          const buf = await this.ossService.get(key);
-          res.setHeader('Content-Type', 'image/png');
-          return res.end(buf);
+          // 封面已上传 OSS：302 重定向到自定义域名外链
+          return res.redirect(302, this.ossService.buildUrl(key));
         }
       } catch (e) {
         this.logger.warn(`OSS 封面读取失败，回退本地：${(e as Error).message}`);

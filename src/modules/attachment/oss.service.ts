@@ -116,11 +116,13 @@ export class OssService {
     });
   }
 
-  /** 构造对象外链地址。 */
+  /** 构造对象外链地址（优先使用自定义域名 oss_domain，自动规范化域名格式）。 */
   buildUrl(remoteKey: string): string {
     const region = this.region().replace(/^https?:\/\//, '').replace(/\.aliyuncs\.com$/, '');
-    const host = this.domain() || `${this.bucket()}.${region}.aliyuncs.com`;
-    return `https://${host}/${remoteKey}`;
+    const host = (this.domain() || `${this.bucket()}.${region}.aliyuncs.com`)
+      .replace(/^https?:\/\//, '')
+      .replace(/\/+$/, '');
+    return `https://${host}/${remoteKey.replace(/^\/+/, '')}`;
   }
 
   /**
