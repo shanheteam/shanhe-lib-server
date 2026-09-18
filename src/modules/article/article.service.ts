@@ -16,6 +16,7 @@ import { Biz } from '../../common/biz.exception';
 import { PermissionService } from '../../auth/permission.service';
 import { JwtUser } from '../../auth/jwt-user.type';
 import { tb } from '../../database/naming-strategy';
+import { toNumberArray, toBoolArray, uniqueNumberArray } from '../../common/query.util';
 
 const ARTICLE_STATUS_PENDING = 0;
 const ARTICLE_STATUS_PASS = 1;
@@ -51,26 +52,6 @@ const ALLOWED_SORT = new Set([
   'updated_at',
   'recommend_at',
 ]);
-
-function toNumberArray(value: unknown): number[] {
-  if (value === undefined || value === null || value === '') return [];
-  const arr = Array.isArray(value) ? value : [value];
-  return arr.map((v) => Number(v)).filter((n) => !Number.isNaN(n));
-}
-
-function toBoolArray(value: unknown): boolean[] {
-  if (value === undefined || value === null || value === '') return [];
-  const arr = Array.isArray(value) ? value : [value];
-  return arr.map((v) => {
-    if (typeof v === 'boolean') return v;
-    const s = String(v).toLowerCase();
-    return s === 'true' || s === '1';
-  });
-}
-
-function unique(nums: number[]): number[] {
-  return Array.from(new Set(nums.filter((n) => n > 0)));
-}
 
 function stripHtml(html: string): string {
   return String(html || '')
@@ -119,7 +100,7 @@ export class ArticleService {
       throw Biz.permissionDenied('您没有权限发布文章');
     }
 
-    const categoryIds = unique(toNumberArray(input.category_id));
+    const categoryIds = uniqueNumberArray(toNumberArray(input.category_id));
 
     let identifier = typeof input.identifier === 'string' ? input.identifier : '';
     if (!isAdmin) identifier = '';
@@ -198,7 +179,7 @@ export class ArticleService {
       throw Biz.permissionDenied('您没有权限修改此文章');
     }
 
-    const categoryIds = unique(toNumberArray(input.category_id));
+    const categoryIds = uniqueNumberArray(toNumberArray(input.category_id));
 
     let status = exist.status;
     if (exist.status === ARTICLE_STATUS_REJECT) status = ARTICLE_STATUS_PENDING;
@@ -420,8 +401,8 @@ export class ArticleService {
     articleIds: unknown,
     categoryIds: unknown,
   ): Promise<Record<string, never>> {
-    const aidList = unique(toNumberArray(articleIds));
-    const cidList = unique(toNumberArray(categoryIds));
+    const aidList = uniqueNumberArray(toNumberArray(articleIds));
+    const cidList = uniqueNumberArray(toNumberArray(categoryIds));
 
     await this.articleRepo.manager.transaction(async (manager) => {
       for (const id of aidList) {
@@ -788,7 +769,7 @@ export class ArticleService {
       }
     }
 
-    const userIds = unique(rows.map((r) => r.user_id));
+    const userIds = uniqueNumberArray(rows.map((r) => r.user_id));
     const userMap: Record<number, any> = {};
     if (userIds.length) {
       const users = await this.userRepo.find({

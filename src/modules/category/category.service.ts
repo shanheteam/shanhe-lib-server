@@ -5,6 +5,7 @@ import { Category } from '../../entities/category.entity';
 import { Biz } from '../../common/biz.exception';
 import { PermissionService } from '../../auth/permission.service';
 import { JwtUser } from '../../auth/jwt-user.type';
+import { toNumberArray, toBoolArray } from '../../common/query.util';
 
 export const CATEGORY_TYPE_DOCUMENT = 0;
 export const CATEGORY_TYPE_ARTICLE = 1;
@@ -21,22 +22,6 @@ export interface CategoryInput {
   enable?: boolean;
   description?: string;
   show_description?: boolean;
-}
-
-function toNumberArray(value: unknown): number[] {
-  if (value === undefined || value === null || value === '') return [];
-  const arr = Array.isArray(value) ? value : [value];
-  return arr.map((v) => Number(v)).filter((n) => !Number.isNaN(n));
-}
-
-function toBoolArray(value: unknown): boolean[] {
-  if (value === undefined || value === null || value === '') return [];
-  const arr = Array.isArray(value) ? value : [value];
-  return arr.map((v) => {
-    if (typeof v === 'boolean') return v;
-    const s = String(v).toLowerCase();
-    return s === 'true' || s === '1';
-  });
 }
 
 @Injectable()

@@ -25,6 +25,7 @@ import { ConfigService } from '../../config/config.service';
 import { ConverterService } from '../converter/converter.service';
 import { OssService, contentTypeOf } from '../attachment/oss.service';
 import { Biz } from '../../common/biz.exception';
+import { asArray, positiveNumberArray, toBoolArray } from '../../common/query.util';
 import { tb } from '../../database/naming-strategy';
 
 export const DocumentStatus = {
@@ -133,24 +134,6 @@ export class DocumentService implements OnModuleInit {
   }
 
   // ================== 工具方法 ==================
-
-  private numArray(v: unknown): number[] {
-    if (v === undefined || v === null) return [];
-    const arr = Array.isArray(v) ? v : [v];
-    return arr.map((n) => Number(n)).filter((n) => Number.isFinite(n) && n > 0);
-  }
-
-  private strArray(v: unknown): string[] {
-    if (v === undefined || v === null) return [];
-    const arr = Array.isArray(v) ? v : [v];
-    return arr.map((s) => String(s)).filter((s) => s !== '');
-  }
-
-  private boolArray(v: unknown): boolean[] {
-    if (v === undefined || v === null) return [];
-    const arr = Array.isArray(v) ? v : [v];
-    return arr.map((b) => b === true || b === 'true' || b === 1 || b === '1');
-  }
 
   private limitRange(n: number, min: number, max: number): number {
     if (n >= max) return max;
@@ -315,7 +298,7 @@ export class DocumentService implements OnModuleInit {
       cateIds.add(Number(c.category_id));
     });
 
-    let cateMap = new Map<number, Category>();
+    const cateMap = new Map<number, Category>();
     if (cateIds.size > 0) {
       const categories = await this.categoryRepo.find({ where: { id: In([...cateIds]) } });
       categories.forEach((c) => cateMap.set(Number(c.id), c));
@@ -521,7 +504,7 @@ export class DocumentService implements OnModuleInit {
       fields.status = Number(body.status);
     }
 
-    const categoryIds = this.numArray(body.category_id);
+    const categoryIds = positiveNumberArray(body.category_id);
 
     const queryRunner = this.docRepo.manager.connection.createQueryRunner();
     await queryRunner.connect();
@@ -635,11 +618,11 @@ export class DocumentService implements OnModuleInit {
     if (page < 1) page = 1;
     if (size < 1) size = 24;
 
-    const categoryIds = this.numArray(params.category_id);
-    const requestUserIds = this.numArray(params.user_id);
-    const requestStatuses = this.numArray(params.status);
-    const recommendArr = this.boolArray(params.is_recommend);
-    const languages = this.strArray(params.language)
+    const categoryIds = positiveNumberArray(params.category_id);
+    const requestUserIds = positiveNumberArray(params.user_id);
+    const requestStatuses = positiveNumberArray(params.status);
+    const recommendArr = toBoolArray(params.is_recommend);
+    const languages = asArray(params.language)
       .map((l) => String(l).trim())
       .filter(Boolean);
 
@@ -732,11 +715,11 @@ export class DocumentService implements OnModuleInit {
     const maxPages = this.config.getInt('display', 'max_search_pages', 100);
     let page = Number(params.page) || 1;
     if (page < 1) page = 1;
-    let size = this.limitRange(Number(params.size) || 24, 1, 24);
+    const size = this.limitRange(Number(params.size) || 24, 1, 24);
     page = this.limitRange(page, 1, maxPages > 0 ? maxPages : 10000);
 
-    const categoryIds = this.numArray(params.category_id);
-    const languages = this.strArray(params.language)
+    const categoryIds = positiveNumberArray(params.category_id);
+    const languages = asArray(params.language)
       .map((l) => String(l).trim())
       .filter(Boolean);
     const terms = wd.split(/\s+/).filter(Boolean);
@@ -1203,9 +1186,9 @@ export class DocumentService implements OnModuleInit {
   async listRecycleDocument(params: any): Promise<Record<string, any>> {
     const page = Number(params.page) || 1;
     const size = Number(params.size) || 24;
-    const categoryIds = this.numArray(params.category_id);
-    const userIdIds = this.numArray(params.user_id);
-    const statuses = this.numArray(params.status);
+    const categoryIds = positiveNumberArray(params.category_id);
+    const userIdIds = positiveNumberArray(params.user_id);
+    const statuses = positiveNumberArray(params.status);
 
     const { docs, total } = await this.queryDocuments({
       page,
@@ -1296,7 +1279,7 @@ export class DocumentService implements OnModuleInit {
   }
 
   private parseCreatedAtRange(v: unknown): [Date, Date] | undefined {
-    const arr = this.strArray(v);
+    const arr = asArray(v);
     if (arr.length === 0) return undefined;
     const start = new Date(arr[0]);
     if (isNaN(start.getTime())) return undefined;

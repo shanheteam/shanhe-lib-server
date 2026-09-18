@@ -19,6 +19,16 @@ export function toBoolArray(value: unknown): boolean[] {
   return asArray(value).map((v) => v === 'true' || v === '1');
 }
 
+/** 数组转正数数组（过滤非正数与 NaN），用于分类/状态等 ID 多选参数 */
+export function positiveNumberArray(value: unknown): number[] {
+  return toNumberArray(value).filter((n) => n > 0);
+}
+
+/** 数组去重（过滤非正数） */
+export function uniqueNumberArray(value: unknown): number[] {
+  return Array.from(new Set(positiveNumberArray(value)));
+}
+
 export function toInt(value: unknown, defaultValue = 1): number {
   const arr = asArray(value);
   if (arr.length === 0) return defaultValue;

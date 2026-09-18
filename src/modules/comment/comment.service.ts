@@ -272,7 +272,7 @@ export class CommentService {
     const docIds = comments.filter((c) => c.type !== 1).map((c) => c.document_id).filter((id) => id > 0);
     const articleIds = comments.filter((c) => c.type === 1).map((c) => c.document_id).filter((id) => id > 0);
 
-    let titleMap = new Map<number, { title: string; uuid: string }>();
+    const titleMap = new Map<number, { title: string; uuid: string }>();
     if (withTitle) {
       if (docIds.length) {
         const docs = await this.documentRepo.find({ where: { id: [...new Set(docIds)] as any } });
