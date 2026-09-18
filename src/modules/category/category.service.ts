@@ -97,12 +97,21 @@ export class CategoryService {
     const parentId = Number(input.parent_id) || 0;
     const title = String(input.title).trim();
 
-    const exist = await this.repo.findOne({
-      where: { parent_id: parentId, title, type },
-      select: ['id'],
-    });
-    if (exist && exist.id > 0 && exist.id !== id) {
-      throw Biz.internal('分类名称已存在');
+    // 同级同名校验：在 SQL 里显式排除自身。
+    // MySQL 默认排序规则大小写不敏感，findOne 可能命中"另一个同名分类"
+    // （例如库里同时存在 Java / java），此时仅编辑自身也会被误判为名称重复。
+    const exist = await this.repo
+      .createQueryBuilder('c')
+      .select(['c.id', 'c.title'])
+      .where('c.parent_id = :parentId', { parentId })
+      .andWhere('c.title = :title', { title })
+      .andWhere('c.type = :type', { type })
+      .andWhere('c.id != :id', { id })
+      .getOne();
+    if (exist) {
+      throw Biz.invalidArgument(
+        `同级下已存在同名分类「${exist.title}」(ID ${exist.id})，请改名或先处理该分类`,
+      );
     }
 
     await this.repo.update(id, {
