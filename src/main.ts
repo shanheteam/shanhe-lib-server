@@ -34,6 +34,19 @@ async function bootstrap() {
     }),
   );
 
+  // 禁止 CDN 缓存 CORS 相关响应。必须注册在 enableCors 之前：
+  // 1) OPTIONS 预检由 cors 中间件直接结束，注册在其后的中间件不会执行；
+  // 2) 带 Origin 的跨域响应携带 per-origin 的 Access-Control-Allow-Origin，
+  //    CDN 若忽略 Vary: Origin 会按首个来源缓存，其它来源命中后拿到错误的
+  //    CORS 头，表现为"间歇性跨域失败"。因此二者都禁止缓存。
+  app.use((req, res, next) => {
+    if (req.method === 'OPTIONS' || req.headers.origin) {
+      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+      res.setHeader('Pragma', 'no-cache');
+    }
+    next();
+  });
+
   const allowedOrigins = env.corsOrigin
     .split(',')
     .map((s) => s.trim())
@@ -58,16 +71,6 @@ async function bootstrap() {
       allowedHeaders: ['Content-Type', 'Authorization'],
     });
   }
-
-  // 禁止 CDN 缓存 CORS 预检响应。否则 EdgeOne 等边缘缓存可能命中一个缺失
-  // Access-Control-Allow-Origin 头的 OPTIONS 响应，导致浏览器间歇性跨域失败。
-  app.use((req, res, next) => {
-    if (req.method === 'OPTIONS') {
-      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
-      res.setHeader('Pragma', 'no-cache');
-    }
-    next();
-  });
 
   // 静态资源目录（上传的图片等），运行时自动创建并暴露给前端访问
   const uploadsDir = path.resolve(process.cwd(), env.uploadDir);

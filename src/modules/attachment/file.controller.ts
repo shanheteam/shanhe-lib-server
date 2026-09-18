@@ -59,6 +59,8 @@ export class FileController {
         const key = OssService.pageKey(hash, safePage);
         if (await this.ossService.exists(key)) {
           // 预览页已上传 OSS：302 重定向到自定义域名外链，浏览器直接从 CDN/OSS 加载
+          // 禁止缓存 302：CDN/浏览器缓存后可能跳过本次跳转，表现为"有时要点第二次"
+          res.setHeader('Cache-Control', 'no-store');
           return res.redirect(302, this.ossService.buildUrl(key));
         }
       } catch (e) {
@@ -82,8 +84,14 @@ export class FileController {
       try {
         const key = OssService.coverKey(hash);
         if (await this.ossService.exists(key)) {
-          // 封面已上传 OSS：302 重定向到自定义域名外链
-          return res.redirect(302, this.ossService.buildUrl(key));
+          // 封面经自定义域名被 OSS 强制下载（Content-Disposition: attachment），
+          // 浏览器会当作下载而非内联渲染图片；改为后端代理拉取后输出 inline 绕过该限制。
+          // 封面内容稳定，用长缓存（CDN/浏览器）降低回源压力。
+          const buf = await this.ossService.get(key);
+          res.setHeader('Content-Type', contentTypeOf('.png'));
+          res.setHeader('Content-Disposition', 'inline');
+          res.setHeader('Cache-Control', 'public, max-age=86400');
+          return res.send(buf);
         }
       } catch (e) {
         this.logger.warn(`OSS 封面读取失败，回退本地：${(e as Error).message}`);
@@ -126,6 +134,8 @@ export class FileController {
             expires: 60,
             responseContentDisposition: buildContentDisposition(filename),
           });
+          // 签名 URL 60s 即过期，302 绝不能被 CDN/浏览器缓存，否则后续访问拿到失效链接
+          res.setHeader('Cache-Control', 'no-store');
           return res.redirect(302, url);
         }
       } catch (e) {
