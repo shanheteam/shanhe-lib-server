@@ -1,6 +1,6 @@
-import { Controller, Get, Logger, Param, Query, Res } from '@nestjs/common';
+import { Controller, Get, Logger, Param, Query, Req, Res } from '@nestjs/common';
 import { SkipThrottle } from '@nestjs/throttler';
-import { Response } from 'express';
+import { Request, Response } from 'express';
 import * as path from 'path';
 import { AttachmentService } from './attachment.service';
 import { OssService, contentTypeOf } from './oss.service';
@@ -98,9 +98,10 @@ export class FileController {
   async download(
     @Param('jwt') jwt: string,
     @Query() query: Record<string, any>,
+    @Req() req: Request,
     @Res() res: Response,
   ) {
-    let claims: { userId: string; hash: string; documentId: string };
+    let claims: { userId: string; hash: string; documentId: string; ip: string };
     try {
       claims = await this.service.verifyDownloadToken(jwt);
     } catch {
@@ -109,6 +110,10 @@ export class FileController {
     const userId = String(query.user_id ?? '');
     const documentId = String(query.document_id ?? '');
     if (claims.userId !== userId || claims.documentId !== documentId) {
+      return res.status(400).send('下载链接已失效');
+    }
+    // 下载链接与领取时的 IP 绑定，转发到其他客户端即失效；旧版未绑定的链接 ip 为空串，予以放行
+    if (claims.ip && claims.ip !== String(req.ip ?? '')) {
       return res.status(400).send('下载链接已失效');
     }
     const filename = String(query.filename ?? '');

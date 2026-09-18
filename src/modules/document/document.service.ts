@@ -1,6 +1,6 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, In, MoreThanOrEqual, IsNull } from 'typeorm';
+import { DataSource, Repository, In, MoreThanOrEqual, IsNull } from 'typeorm';
 import { JwtService } from '@nestjs/jwt';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -120,6 +120,7 @@ export class DocumentService implements OnModuleInit {
     private readonly converter: ConverterService,
     private readonly ossService: OssService,
     private readonly jwtService: JwtService,
+    private readonly dataSource: DataSource,
   ) {}
 
   onModuleInit() {
@@ -900,33 +901,56 @@ export class DocumentService implements OnModuleInit {
     const isOwner = Number(doc.user_id) === userId;
     let isPay = price > 0 && !isOwner;
 
+    let needCredit = false;
     if (!isOwner) {
       if (await this.isOwnedDocument(userId, id)) {
         isPay = false;
       } else if (downcode) {
         await this.consumeDownloadCode(downcode, userId, price);
       } else if (price > 0) {
-        const user = await this.userRepo.findOne({ where: { id: userId } });
-        const credit = Number(user?.credit_count) || 0;
-        if (credit < price) {
-          throw Biz.permissionDenied(`${creditName}不足，无法下载`);
-        }
-        await this.userRepo.decrement({ id: userId }, 'credit_count', price);
+        // 需要扣积分：余额校验与扣减放入下方事务，原子条件扣减杜绝并发超扣
+        needCredit = true;
       }
     }
 
-    const down = this.downloadRepo.create({
-      user_id: userId,
-      document_id: id,
-      ip,
-      is_pay: isPay,
-      created_at: new Date(),
-      updated_at: new Date(),
-    });
-    await this.downloadRepo.save(down);
-    await this.docRepo.increment({ id }, 'download_count', 1);
+    // 扣积分（如需）、保存下载记录、下载计数自增放在同一事务内。
+    // 积分使用条件 UPDATE（credit_count >= price 才扣），并发请求无法同时通过余额校验。
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+    try {
+      if (needCredit) {
+        const result = await queryRunner.manager
+          .createQueryBuilder()
+          .update(User)
+          .set({ credit_count: () => `credit_count - ${price}` })
+          .where('id = :userId AND credit_count >= :price', { userId, price })
+          .execute();
+        if ((result.affected || 0) === 0) {
+          throw Biz.permissionDenied(`${creditName}不足，无法下载`);
+        }
+      }
 
-    return { url: this.generateDownloadURL(doc, attachment.hash, id, userId) };
+      const down = queryRunner.manager.create(Download, {
+        user_id: userId,
+        document_id: id,
+        ip,
+        is_pay: isPay,
+        created_at: new Date(),
+        updated_at: new Date(),
+      });
+      await queryRunner.manager.save(down);
+      await queryRunner.manager.increment(Document, { id }, 'download_count', 1);
+
+      await queryRunner.commitTransaction();
+    } catch (e) {
+      await queryRunner.rollbackTransaction();
+      throw e;
+    } finally {
+      await queryRunner.release();
+    }
+
+    return { url: this.generateDownloadURL(doc, attachment.hash, id, userId, ip) };
   }
 
   private async isOwnedDocument(userId: number, documentId: number): Promise<boolean> {
@@ -997,14 +1021,16 @@ export class DocumentService implements OnModuleInit {
     });
     await this.downloadRepo.save(down);
 
-    return { url: this.generateDownloadURL(doc, attachment.hash, id, userId) };
+    return { url: this.generateDownloadURL(doc, attachment.hash, id, userId, ip) };
   }
 
-  private generateDownloadURL(doc: Document, hash: string, documentId: number, userId: number): string {
+  private generateDownloadURL(doc: Document, hash: string, documentId: number, userId: number, ip: string): string {
     const secretKey = this.config.getDownloadSecret();
     const urlDuration = this.config.getInt('download', 'url_duration', 60);
     const jti = `${userId}.${hash}.${documentId}`;
-    const token = this.jwtService.sign({}, { secret: secretKey, expiresIn: urlDuration, jwtid: jti });
+    // ip 放入 payload 而非 jti：IPv4 含点号，拼进 jti 会破坏 `.` 分隔解析。
+    // 下载链接与领取 IP 绑定，转发他人后路由校验 IP 不一致即失效。
+    const token = this.jwtService.sign({ ip }, { secret: secretKey, expiresIn: urlDuration, jwtid: jti });
     const filename = encodeURIComponent(String(doc.title) + String(doc.ext || ''));
     return `/download/${token}?user_id=${userId}&document_id=${documentId}&filename=${filename}`;
   }

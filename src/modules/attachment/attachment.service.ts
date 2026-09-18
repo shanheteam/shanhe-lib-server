@@ -459,7 +459,7 @@ export class AttachmentService {
     return path.resolve(process.cwd(), 'documents', ...hash.slice(0, 5).split(''), `${hash}${ext}`);
   }
 
-  async verifyDownloadToken(token: string): Promise<{ userId: string; hash: string; documentId: string }> {
+  async verifyDownloadToken(token: string): Promise<{ userId: string; hash: string; documentId: string; ip: string }> {
     const secret = this.configService.getDownloadSecret();
     let payload: Record<string, any>;
     try {
@@ -470,7 +470,7 @@ export class AttachmentService {
     const id = String(payload.jti ?? '');
     const parts = id.split('.');
     if (parts.length !== 3) throw Biz.invalidArgument('下载链接已失效');
-    return { userId: parts[0], hash: parts[1], documentId: parts[2] };
+    return { userId: parts[0], hash: parts[1], documentId: parts[2], ip: String(payload.ip ?? '') };
   }
 
   faviconPath(): string {
