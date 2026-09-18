@@ -25,6 +25,7 @@ import { ConfigService } from '../../config/config.service';
 import { ConverterService } from '../converter/converter.service';
 import { OssService, contentTypeOf } from '../attachment/oss.service';
 import { Biz } from '../../common/biz.exception';
+import { tb } from '../../database/naming-strategy';
 
 export const DocumentStatus = {
   Pending: 0, // 待转换
@@ -198,9 +199,10 @@ export class DocumentService implements OnModuleInit {
     }
 
     if (opt.categoryIds && opt.categoryIds.length > 0) {
-      // 分类过滤下推到 SQL：命中任一分类即可，等价于原先在内存中做 document_id 交集
+      // 分类过滤下推到 SQL：命中任一分类即可，等价于原先在内存中做 document_id 交集。
+      // 注意命名策略会为表名加 mnt_ 前缀，必须用 tb() 生成真实表名
       qb.andWhere(
-        'EXISTS (SELECT 1 FROM document_category dc WHERE dc.document_id = d.id AND dc.category_id IN (:...categoryIds))',
+        `EXISTS (SELECT 1 FROM ${tb('document_category')} dc WHERE dc.document_id = d.id AND dc.category_id IN (:...categoryIds))`,
         { categoryIds: opt.categoryIds },
       );
     }

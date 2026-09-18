@@ -4,6 +4,7 @@ import { MoreThan, Repository } from 'typeorm';
 import { Sms, User } from '../../entities';
 import { ConfigService } from '../../config/config.service';
 import { Biz } from '../../common/biz.exception';
+import { tb } from '../../database/naming-strategy';
 import {
   normalizePageSize,
   toNumberArray,
@@ -86,7 +87,7 @@ export class SmsService {
 
     const conf: Record<string, string> = {};
     const rows = await this.repo.manager.query(
-      'SELECT name, value FROM config WHERE category = ? AND deleted_at IS NULL',
+      `SELECT name, value FROM ${tb('config')} WHERE category = ? AND deleted_at IS NULL`,
       [provider],
     );
     for (const row of rows as Array<{ name: string; value: string }>) {
