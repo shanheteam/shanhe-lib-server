@@ -6,7 +6,6 @@ import {
 } from '@nestjs/common';
 import { SearchRecordService } from './searchrecord.service';
 import { RequirePermission } from '../../common/decorators/permission.decorator';
-import { RequireLogin } from '../../common/decorators/require-login.decorator';
 import { toNumberArray } from '../../common/query.util';
 
 @Controller('searchrecord')
@@ -21,7 +20,7 @@ export class SearchRecordController {
   }
 
   @Get('list')
-  @RequireLogin()
+  @RequirePermission('/api.v1.SearchRecordAPI/ListSearchRecord')
   list(@Query() query: any) {
     return this.service.list(query);
   }

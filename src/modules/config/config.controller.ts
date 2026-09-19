@@ -398,12 +398,9 @@ export class ConfigController {
     };
   }
 
+  @RequireRoot()
   @Get('envs')
-  async getEnvs(@CurrentUser() user?: JwtUser) {
-    if (!(await this.hasAccess(user, '/api.v1.ConfigAPI/GetEnvs'))) {
-      return { envs: [] };
-    }
-
+  async getEnvs() {
     const envs = [
       {
         name: 'LibreOffice',
