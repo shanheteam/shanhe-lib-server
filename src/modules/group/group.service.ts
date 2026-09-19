@@ -3,6 +3,8 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Group, GroupPermission } from '../../entities';
 import { Biz } from '../../common/biz.exception';
+import { PermissionService } from '../../auth/permission.service';
+import { JwtUser } from '../../auth/jwt-user.type';
 
 export interface GroupInput {
   id?: number;
@@ -54,6 +56,7 @@ export class GroupService {
     private readonly groupRepo: Repository<Group>,
     @InjectRepository(GroupPermission)
     private readonly groupPermissionRepo: Repository<GroupPermission>,
+    private readonly permissionService: PermissionService,
   ) {}
 
   async createGroup(input: GroupInput): Promise<Group> {
@@ -203,12 +206,19 @@ export class GroupService {
   async updateGroupPermission(
     group_id: number,
     permission_id: number[],
+    caller?: JwtUser,
   ): Promise<Record<string, never>> {
     if (!group_id) throw Biz.invalidArgument('用户组ID不能为空');
 
     const permissionIds = Array.from(
       new Set((permission_id ?? []).map(Number).filter((id) => id > 0)),
     );
+
+    // 可分配上限限制：低权限管理员只能把自己的权限授予出去，不能把组提升到超出自身权限范围。
+    // root（或未登录兜底）不受限；仅存在分配内容时才校验。
+    if (permissionIds.length > 0 && !(await this.permissionService.canAssignPermission(caller?.userId ?? 0, permissionIds))) {
+      throw Biz.permissionDenied('您不能授予自己没有的权限');
+    }
 
     await this.groupPermissionRepo.manager.transaction(async (manager) => {
       const repo = manager.getRepository(GroupPermission);

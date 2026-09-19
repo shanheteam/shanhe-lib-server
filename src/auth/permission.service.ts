@@ -1,7 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import { Permission, UserGroup, GroupPermission } from '../entities';
+import { ROOT_USER_ID } from '../common/root-user.constant';
 
 /**
  * RBAC 权限判断：与原版 model.CheckPermissionByUserId 对齐。
@@ -55,7 +56,7 @@ export class PermissionService {
 
   async check(userId: number, grpcMethod: string): Promise<boolean> {
     if (userId <= 0) return false;
-    if (userId === 1) return true;
+    if (userId === ROOT_USER_ID) return true;
 
     const permission = await this.getPermission('GRPC', grpcMethod);
 
@@ -74,7 +75,7 @@ export class PermissionService {
   /** 是否为管理员（拥有任意 group_permission 记录，或 ID==1） */
   async isAdmin(userId: number): Promise<boolean> {
     if (userId <= 0) return false;
-    if (userId === 1) return true;
+    if (userId === ROOT_USER_ID) return true;
 
     const gp = await this.groupPermissionRepo
       .createQueryBuilder('gp')
@@ -84,5 +85,52 @@ export class PermissionService {
       .getOne();
 
     return !!gp;
+  }
+
+  /**
+   * 返回用户当前拥有的 GRPC 权限 path 集合。
+   * root 返回 null 表示拥有全部权限。
+   */
+  async getUserGrantedPaths(userId: number): Promise<Set<string> | null> {
+    if (userId === ROOT_USER_ID) return null;
+
+    const rows = await this.groupPermissionRepo
+      .createQueryBuilder('gp')
+      .innerJoin(UserGroup, 'ug', 'ug.group_id = gp.group_id')
+      .innerJoin(Permission, 'p', 'p.id = gp.permission_id')
+      .where('ug.user_id = :userId', { userId })
+      .andWhere('ug.group_id > 0')
+      .select(['p.path AS path', 'p.method AS method'])
+      .getRawMany<{ path: string; method: string }>();
+
+    const set = new Set<string>();
+    for (const row of rows) {
+      if (row.method === 'GRPC') set.add(row.path);
+    }
+    return set;
+  }
+
+  /**
+   * 可分配上限限制：调用者是否有权把给定权限授予出去。
+   * - root 拥有全部，恒为 true；
+   * - 非 GRPC 权限（如 upload 前端映射）不参与上限限制；
+   * - 否则要求调用者本身已拥有该权限，低权限管理员不能把比自己更高/更多的权限分配出去。
+   */
+  async canAssignPermission(userId: number, permissionIds: number[]): Promise<boolean> {
+    if (userId === ROOT_USER_ID) return true;
+    if (!permissionIds || permissionIds.length === 0) return true;
+
+    const granted = await this.getUserGrantedPaths(userId);
+    // userId 非 root 时 granted 必不为 null；防御性兜底
+    if (!granted) return true;
+
+    const perms = await this.permissionRepo.find({
+      where: { id: In([...new Set(permissionIds)].filter((id) => id > 0)) },
+    });
+    for (const p of perms) {
+      if (p.method !== 'GRPC') continue;
+      if (!granted.has(p.path)) return false;
+    }
+    return true;
   }
 }

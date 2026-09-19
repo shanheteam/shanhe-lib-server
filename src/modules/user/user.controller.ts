@@ -71,14 +71,14 @@ export class UserController {
 
   @RequirePermission('/api.v1.UserAPI/AddUser')
   @Post()
-  addUser(@Body() body: any) {
-    return this.userService.addUser(body);
+  addUser(@Body() body: any, @CurrentUser() user: JwtUser) {
+    return this.userService.addUser(body, user);
   }
 
   @RequirePermission('/api.v1.UserAPI/SetUser')
   @Put()
-  setUser(@Body() body: any) {
-    return this.userService.setUser(body);
+  setUser(@Body() body: any, @CurrentUser() user: JwtUser) {
+    return this.userService.setUser(body, user);
   }
 
   @RequirePermission('/api.v1.UserAPI/ListUser')

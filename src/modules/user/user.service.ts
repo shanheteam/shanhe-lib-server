@@ -21,6 +21,7 @@ import { PermissionService } from '../../auth/permission.service';
 import { CaptchaService } from '../captcha/captcha.service';
 import { MailService } from '../mail/mail.service';
 import { JwtUser } from '../../auth/jwt-user.type';
+import { ROOT_USER_ID } from '../../common/root-user.constant';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -177,14 +178,28 @@ export class UserService {
   private buildPublicUserJson(user: User, groupIds: number[] = []): Record<string, unknown> {
     const full = this.buildUserJson(user, groupIds);
     const out: Record<string, unknown> = {};
+    // 公开资料仅返回 PUBLIC_FIELDS，避免泄露目标用户所属角色组等信息
     for (const field of PUBLIC_FIELDS) out[field] = full[field];
-    out.group_id = groupIds;
     return out;
   }
 
   private async getGroupIds(userId: number): Promise<number[]> {
     const rows = await this.userGroupRepo.find({ where: { user_id: userId } });
     return rows.map((r) => Number(r.group_id)).filter((id) => id > 0);
+  }
+
+  /**
+   * 可分配上限校验：调用者能否把用户分配到给定用户组。
+   * 规则：目标组的全部权限集合 ⊆ 调用者已拥有的权限集合（root 恒可）。
+   */
+  private async canAssignGroups(userId: number, groupIds: number[]): Promise<boolean> {
+    if (userId === ROOT_USER_ID) return true;
+    const ids = (groupIds ?? []).filter((g) => g > 0);
+    if (ids.length === 0) return true;
+
+    const gp = await this.groupPermissionRepo.find({ where: { group_id: In(ids) } });
+    const pids = gp.map((x) => Number(x.permission_id)).filter((n) => n > 0);
+    return this.permissionService.canAssignPermission(userId, pids);
   }
 
   private emailServiceConfigured(): boolean {
@@ -454,6 +469,10 @@ export class UserService {
     if (!ok) {
       throw Biz.permissionDenied('您没有权限重置他人密码');
     }
+    // root 保护：仅 root 可重置 root 密码，防止低权限管理员接管超级管理员
+    if (targetId === ROOT_USER_ID && user.userId !== ROOT_USER_ID) {
+      throw Biz.permissionDenied('您没有权限重置超级管理员密码');
+    }
     await this.userRepo.update(targetId, {
       password: makePassword(newPassword),
       updated_at: new Date(),
@@ -498,12 +517,21 @@ export class UserService {
       throw Biz.invalidArgument('ID错误');
     }
 
+    // root 保护：禁止删除超级管理员账号
+    if (ids.some((id) => id === ROOT_USER_ID)) {
+      throw Biz.invalidArgument('不允许删除超级管理员账号');
+    }
+    // 自身保护：禁止删除当前登录账号
+    if (ids.some((id) => id === user.userId)) {
+      throw Biz.invalidArgument('不能删除当前登录的账号');
+    }
+
     await this.userGroupRepo.delete({ user_id: In(ids) });
     await this.userRepo.delete(ids);
     return {};
   }
 
-  async addUser(body: SetUserBody): Promise<Record<string, never>> {
+  async addUser(body: SetUserBody, caller?: JwtUser): Promise<Record<string, never>> {
     const password = body.password ?? '';
     const email = String(body.email ?? '').trim();
     const groupIds = (body.group_id ?? []).map((v) => Number(v)).filter((v) => v > 0);
@@ -516,6 +544,10 @@ export class UserService {
     }
     if (groupIds.length === 0) {
       throw Biz.invalidArgument('用户组不能为空');
+    }
+    // 可分配上限：低权限管理员不能把新用户放入比自己权限更高的用户组
+    if (!(await this.canAssignGroups(caller?.userId ?? 0, groupIds))) {
+      throw Biz.permissionDenied('您不能将用户分配到拥有更高权限的用户组');
     }
 
     const existEmail = await this.userRepo.findOne({ where: { email } });
@@ -547,7 +579,7 @@ export class UserService {
     return {};
   }
 
-  async setUser(body: SetUserBody): Promise<Record<string, never>> {
+  async setUser(body: SetUserBody, caller?: JwtUser): Promise<Record<string, never>> {
     const targetId = Number(body.id) || 0;
     const groupIds = (body.group_id ?? []).map((v) => Number(v)).filter((v) => v > 0);
 
@@ -556,6 +588,14 @@ export class UserService {
     }
     if (groupIds.length === 0) {
       throw Biz.invalidArgument('用户组不能为空');
+    }
+    // root 保护：仅 root 可修改 root 账号（改角色组或重置密码），防止低权限管理员接管超级管理员
+    if (targetId === ROOT_USER_ID && caller?.userId !== ROOT_USER_ID) {
+      throw Biz.permissionDenied('您没有权限修改超级管理员账号');
+    }
+    // 可分配上限：低权限管理员只能把用户分配到不超出自身权限的组，不能放入更高权限的用户组
+    if (!(await this.canAssignGroups(caller?.userId ?? 0, groupIds))) {
+      throw Biz.permissionDenied('您不能将用户分配到拥有更高权限的用户组');
     }
 
     const now = new Date();
@@ -651,7 +691,7 @@ export class UserService {
   // ---------- 用户权限与行为能力 ----------
 
   async getUserPermissions(user: JwtUser): Promise<{ permission: Permission[] }> {
-    if (user.userId === 1) {
+    if (user.userId === ROOT_USER_ID) {
       const permissions = await this.permissionRepo.find();
       return { permission: permissions };
     }
@@ -673,7 +713,7 @@ export class UserService {
   }
 
   async canIUploadDocument(user: JwtUser): Promise<Record<string, never>> {
-    if (user.userId === 1) return {};
+    if (user.userId === ROOT_USER_ID) return {};
 
     const ugs = await this.userGroupRepo.find({ where: { user_id: user.userId } });
     const gids = ugs.map((x) => Number(x.group_id)).filter((n) => n > 0);
@@ -688,7 +728,7 @@ export class UserService {
   }
 
   async canIPublishArticle(user: JwtUser): Promise<Record<string, never>> {
-    if (user.userId === 1) return {};
+    if (user.userId === ROOT_USER_ID) return {};
 
     const ugs = await this.userGroupRepo.find({ where: { user_id: user.userId } });
     const gids = ugs.map((x) => Number(x.group_id)).filter((n) => n > 0);

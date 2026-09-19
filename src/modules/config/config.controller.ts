@@ -19,6 +19,7 @@ import {
 } from '../../entities';
 import { Public } from '../../common/decorators/public.decorator';
 import { RequirePermission } from '../../common/decorators/permission.decorator';
+import { RequireRoot } from '../../common/decorators/root.decorator';
 import { RequireLogin } from '../../common/decorators/require-login.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { Biz } from '../../common/biz.exception';
@@ -508,6 +509,7 @@ export class ConfigController {
     return {};
   }
 
+  @RequireRoot()
   @RequirePermission('/api.v1.ConfigAPI/GetDeviceInfo')
   @Get('device')
   getDeviceInfo() {
@@ -534,6 +536,7 @@ export class ConfigController {
     };
   }
 
+  @RequireRoot()
   @RequirePermission('/api.v1.ConfigAPI/SetSQLMode')
   @Put('sqlmode')
   async setSQLMode() {
@@ -543,6 +546,7 @@ export class ConfigController {
     return {};
   }
 
+  @RequireRoot()
   @RequirePermission('/api.v1.ConfigAPI/UpdateConfig')
   @Post('config/oauth-test')
   async testOauthConfig(@Body() body: { url: string; method?: string; data?: any; params?: any }) {
@@ -589,6 +593,7 @@ export class ConfigController {
    * 检测邮箱：用表单里的最新值（未修改的密码项沿用已保存值）校验 SMTP 连接与账号密码，
    * 填写了测试邮箱时再真实投递一封测试邮件。
    */
+  @RequireRoot()
   @RequirePermission('/api.v1.ConfigAPI/UpdateConfig')
   @Post('config/email-test')
   async testEmailConfig(

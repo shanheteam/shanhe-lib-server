@@ -8,6 +8,8 @@ import {
   Query,
 } from '@nestjs/common';
 import { RequirePermission } from '../../common/decorators/permission.decorator';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { JwtUser } from '../../auth/jwt-user.type';
 import { GroupService, GroupInput } from './group.service';
 
 @Controller('group')
@@ -69,10 +71,12 @@ export class GroupController {
   @RequirePermission('/api.v1.GroupAPI/UpdateGroupPermission')
   updatePermission(
     @Body() body: { group_id?: number; permission_id?: number[] },
+    @CurrentUser() user: JwtUser,
   ) {
     return this.groupService.updateGroupPermission(
       body.group_id ?? 0,
       body.permission_id ?? [],
+      user,
     );
   }
 }
