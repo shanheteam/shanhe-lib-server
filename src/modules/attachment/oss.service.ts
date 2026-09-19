@@ -170,6 +170,16 @@ export class OssService {
     return Buffer.isBuffer(res.content) ? res.content : Buffer.from(res.content);
   }
 
+  /** 查询对象元信息，返回 { size, etag }；对象不存在时抛错（404）。etag 为单段上传时的 MD5（去引号）。 */
+  async head(remoteKey: string): Promise<{ size: number; etag: string }> {
+    const res = await this.client().head(remoteKey);
+    const headers = res?.res?.headers ?? {};
+    return {
+      size: Number(headers['content-length'] ?? 0),
+      etag: String(headers['etag'] ?? '').replace(/^"|"$/g, ''),
+    };
+  }
+
   /**
    * 生成签名下载 URL。
    * 配置了自定义域名（oss_domain）时，将默认 OSS 端点 host 替换为自定义域名；
@@ -191,5 +201,46 @@ export class OssService {
       /^https?:\/\/[^/?#]+/,
       `https://${domain.replace(/^https?:\/\//, '').replace(/\/+$/, '')}`,
     );
+  }
+
+  /**
+   * 生成 OSS POST 表单直传签名（前端直传大文件，绕开 EdgeOne Makers 网关约 50MB 请求体限制）。
+   * policy 精确锁定 key 与文件大小（content-length-range [size, size]），
+   * 防止前端伪造 key / 大小；过期 60 分钟覆盖慢速上传。
+   * host 固定使用 OSS 默认端点 {bucket}.{region}.aliyuncs.com，不使用 oss_domain：
+   * CDN 会缓存缺 CORS 头的 OPTIONS 预检导致直传失败（历史踩坑）。
+   */
+  createPostPolicy(options: {
+    key: string;
+    size: number;
+    contentType: string;
+  }): {
+    host: string;
+    key: string;
+    success_action_status: string;
+    'Content-Type': string;
+    OSSAccessKeyId: string;
+    Signature: string;
+    policy: string;
+  } {
+    const region = this.region().replace(/^https?:\/\//, '').replace(/\.aliyuncs\.com$/, '');
+    const host = `https://${this.bucket()}.${region}.aliyuncs.com`;
+    const expiration = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+    const signed = this.client().calculatePostSignature({
+      expiration,
+      conditions: [
+        ['content-length-range', options.size, options.size],
+        { key: options.key },
+        ['eq', '$Content-Type', options.contentType],
+        { success_action_status: '200' },
+      ],
+    });
+    return {
+      host,
+      key: options.key,
+      success_action_status: '200',
+      'Content-Type': options.contentType,
+      ...signed,
+    };
   }
 }

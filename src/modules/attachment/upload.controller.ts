@@ -1,4 +1,5 @@
 import {
+  Body,
   Controller,
   Ip,
   Post,
@@ -54,6 +55,27 @@ export class UploadController {
     @CurrentUser() user: JwtUser,
   ) {
     return this.service.uploadDocument(file, ip || '', user?.userId ?? 0);
+  }
+
+  /** OSS POST 表单直传签名：前端直传大文件绕开平台网关请求体限制，签名后由前端直接上传 OSS。 */
+  @RequireLogin()
+  @Post('oss-policy')
+  createOssPolicy(
+    @Body() body: { hash: string; ext: string; size: number },
+    @CurrentUser() user: JwtUser,
+  ) {
+    return this.service.createOssPolicy(user?.userId ?? 0, body);
+  }
+
+  /** 注册 OSS 直传完成的文档：校验对象真实性后落库，返回附件 id，转换 worker 自动接手。 */
+  @RequireLogin()
+  @Post('document/oss')
+  registerOssDocument(
+    @Body() body: { hash: string; name: string; ext: string; size: number },
+    @Ip() ip: string,
+    @CurrentUser() user: JwtUser,
+  ) {
+    return this.service.registerOssDocument(user?.userId ?? 0, ip || '', body);
   }
 
   @RequireLogin()

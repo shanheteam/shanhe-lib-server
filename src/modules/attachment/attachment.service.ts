@@ -13,7 +13,7 @@ import {
   UserGroup,
 } from '../../entities';
 import { Biz } from '../../common/biz.exception';
-import { OssService } from './oss.service';
+import { OssService, contentTypeOf } from './oss.service';
 import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -291,23 +291,97 @@ export class AttachmentService {
   async uploadDocument(file: Express.Multer.File, ip: string, userId: number): Promise<{ id: number }> {
     if (!file) throw Biz.invalidArgument('缺少上传文件');
     const ext = path.extname(file.originalname).toLowerCase();
+    await this.validateDocumentUpload(ext, file.size, userId);
+
+    const saved = await this.saveFile(file, ip, true);
+    const attachment = await this.createAttachment({ user_id: userId, type: 2, ...saved });
+    return { id: attachment.id };
+  }
+
+  /** 文档上传通用校验（扩展名 + 大小 + 权限），multer 直传与 OSS 直传两路共用。 */
+  private async validateDocumentUpload(ext: string, size: number, userId: number): Promise<void> {
     if (!isDocumentExt(ext)) throw Biz.invalidArgument('不支持的文档类型');
 
     const allowedRaw = this.configService.get('security', 'document_allowed_ext', '');
     const allowed = allowedRaw.split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
     if (allowed.length && !allowed.includes(ext)) throw Biz.invalidArgument('不支持的文档类型');
 
-    const maxSizeMb = this.configService.getInt('security', 'max_document_size', 50);
-    if (file.size > maxSizeMb * 1024 * 1024) {
+    // 最大文档大小：以后台「安全-最大文档大小(MB)」配置为准；
+    // 配置缺失或非法（0/负数/非数字）时回退默认 50MB，与前端 upload.vue 保持一致
+    let maxSizeMb = this.configService.getInt('security', 'max_document_size', 50);
+    if (maxSizeMb <= 0) maxSizeMb = 50;
+    if (size > maxSizeMb * 1024 * 1024) {
       throw Biz.invalidArgument(`文档大小不能超过 ${maxSizeMb}MB`);
     }
 
     if (!(await this.canAccessUploadDocument(userId))) {
       throw Biz.permissionDenied('没有权限上传文档');
     }
+  }
 
-    const saved = await this.saveFile(file, ip, true);
-    const attachment = await this.createAttachment({ user_id: userId, type: 2, ...saved });
+  /**
+   * 生成 OSS POST 表单直传签名（前端直传大文件，绕开平台网关请求体限制）。
+   * OSS 未启用时返回 { enabled: false }，前端回退原 multer 上传路径。
+   */
+  async createOssPolicy(
+    userId: number,
+    body: { hash: string; ext: string; size: number },
+  ): Promise<Record<string, unknown>> {
+    const hash = String(body?.hash ?? '').toLowerCase();
+    const ext = String(body?.ext ?? '').toLowerCase();
+    const size = Math.floor(Number(body?.size));
+    if (!/^[0-9a-f]{32}$/.test(hash)) throw Biz.invalidArgument('文件指纹无效');
+    if (!Number.isFinite(size) || size <= 0) throw Biz.invalidArgument('文件大小无效');
+    await this.validateDocumentUpload(ext, size, userId);
+    if (!this.ossService.isEnabled()) return { enabled: false };
+    const key = OssService.documentKey(hash, ext);
+    return { enabled: true, ...this.ossService.createPostPolicy({ key, size, contentType: contentTypeOf(ext) }) };
+  }
+
+  /**
+   * 注册 OSS 直传完成的文档：校验对象真实性（head 大小 + ETag=MD5）后落库，返回附件 id。
+   */
+  async registerOssDocument(
+    userId: number,
+    ip: string,
+    body: { hash: string; name: string; ext: string; size: number },
+  ): Promise<{ id: number }> {
+    const hash = String(body?.hash ?? '').toLowerCase();
+    const name = String(body?.name ?? '');
+    const ext = String(body?.ext ?? '').toLowerCase();
+    const size = Math.floor(Number(body?.size));
+    if (!/^[0-9a-f]{32}$/.test(hash)) throw Biz.invalidArgument('文件指纹无效');
+    if (!Number.isFinite(size) || size <= 0) throw Biz.invalidArgument('文件大小无效');
+    await this.validateDocumentUpload(ext, size, userId);
+
+    // 服务端重算扩展名与入参比对：key 由客户端 ext 推导，不一致会导致转换 worker
+    // 按 attachment.ext 推导 key 下载 404
+    if (path.extname(name).toLowerCase() !== ext) throw Biz.invalidArgument('文件扩展名不匹配');
+
+    const key = OssService.documentKey(hash, ext);
+    const meta = await this.ossService.head(key).catch(() => null);
+    if (!meta) throw Biz.invalidArgument('文件未上传成功，请重试');
+    if (meta.size !== size) throw Biz.invalidArgument('文件大小与上传结果不一致');
+    // 单段 POST 上传的对象 ETag 即内容 MD5，防前端伪造 hash
+    if (meta.etag && meta.etag.toLowerCase() !== hash) throw Biz.invalidArgument('文件内容校验失败');
+
+    // 幂等：同一用户同一文件的启用附件已存在则直接复用，防注册响应丢失重试产生重复
+    const exist = await this.attachmentRepo.findOne({
+      where: { user_id: userId, hash, type: 2, enable: true },
+    });
+    if (exist) return { id: exist.id };
+
+    const attachment = await this.createAttachment({
+      user_id: userId,
+      type: 2,
+      path: this.ossService.buildUrl(key),
+      size,
+      name,
+      ext,
+      hash,
+      enable: true,
+      ip,
+    });
     return { id: attachment.id };
   }
 
