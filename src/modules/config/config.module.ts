@@ -13,6 +13,7 @@ import {
   Report,
 } from '../../entities';
 import { ConfigController } from './config.controller';
+import { OssService } from '../attachment/oss.service';
 
 /**
  * 配置 API 模块：提供站点设置、配置项管理、系统统计、环境依赖、
@@ -35,5 +36,6 @@ import { ConfigController } from './config.controller';
     ]),
   ],
   controllers: [ConfigController],
+  providers: [OssService],
 })
 export class ConfigApiModule {}

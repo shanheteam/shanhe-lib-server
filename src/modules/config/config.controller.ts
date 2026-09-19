@@ -24,6 +24,7 @@ import { RequireLogin } from '../../common/decorators/require-login.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { Biz } from '../../common/biz.exception';
 import { PermissionService } from '../../auth/permission.service';
+import { OssService } from '../attachment/oss.service';
 import { ConfigService } from '../../config/config.service';
 import { MailService } from '../mail/mail.service';
 import { assertSafeOutboundUrl } from '../../common/url-guard.util';
@@ -86,6 +87,7 @@ export class ConfigController {
     private readonly configService: ConfigService,
     private readonly mailService: MailService,
     private readonly dataSource: DataSource,
+    private readonly ossService: OssService,
   ) {
     // 定时自动重建 sitemap：启动 5 分钟后首次生成，之后每天生成一次（兜底，手动按钮仍可用）
     setTimeout(() => {
@@ -453,6 +455,11 @@ export class ConfigController {
   @Put('sitemap')
   async updateSitemap() {
     const domain = (await this.getConfigValue('system', 'domain')).replace(/\/+$/, '');
+    // 站点地图产物统一落到 OSS（sitemap/ 前缀），loc 使用 OSS 可访问域名；
+    // OSS 未启用时回退本地磁盘静态目录（此时 loc 指向本站 /sitemap/ 路径）。
+    const sitemapBase = this.ossService.isEnabled()
+      ? this.ossService.buildUrl('sitemap').replace(/\/+$/, '')
+      : `${domain}/sitemap`;
     const limit = 10000;
     const indexes: Array<{ loc: string; lastmod: string }> = [];
 
@@ -473,8 +480,8 @@ export class ConfigController {
         loc: `${domain}/document/${doc.uuid}`,
         lastmod: doc.updated_at ? doc.updated_at.toISOString() : now,
       }));
-      this.writeFile(file, this.buildSitemapXml(urls));
-      indexes.push({ loc: `${domain}/${file}`, lastmod: now });
+      await this.putSitemapFile(file, this.buildSitemapXml(urls));
+      indexes.push({ loc: `${sitemapBase}/documents-${page}.xml`, lastmod: now });
       page++;
     }
 
@@ -495,15 +502,27 @@ export class ConfigController {
         loc: `${domain}/article/${article.identifier}`,
         lastmod: article.updated_at ? article.updated_at.toISOString() : now,
       }));
-      this.writeFile(file, this.buildSitemapXml(urls));
-      indexes.push({ loc: `${domain}/${file}`, lastmod: now });
+      await this.putSitemapFile(file, this.buildSitemapXml(urls));
+      indexes.push({ loc: `${sitemapBase}/articles-${page}.xml`, lastmod: now });
       page++;
     }
 
     if (indexes.length > 0) {
-      this.writeFile('sitemap/sitemap.xml', this.buildSitemapIndexXml(indexes));
+      await this.putSitemapFile('sitemap/sitemap.xml', this.buildSitemapIndexXml(indexes));
     }
     return {};
+  }
+
+  /**
+   * 写入站点地图文件：优先上传 OSS（线上 serverless 容器文件系统只读，本地写盘会失败），
+   * OSS 未启用时回退本地磁盘（保留本地静态托管能力）。
+   */
+  private async putSitemapFile(relativePath: string, content: string): Promise<void> {
+    if (this.ossService.isEnabled()) {
+      await this.ossService.put(relativePath, Buffer.from(content, 'utf8'), 'application/xml');
+      return;
+    }
+    this.writeFile(relativePath, content);
   }
 
   @RequireRoot()
