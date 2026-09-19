@@ -804,7 +804,15 @@ export class DocumentService implements OnModuleInit {
     if (withAuthor) {
       const user = await this.userRepo.findOne({ where: { id: uid } });
       item.user = user
-        ? { id: Number(user.id), avatar: user.avatar, realname: user.realname, identity: user.identity }
+        ? {
+            id: Number(user.id),
+            avatar: user.avatar,
+            realname: user.realname,
+            identity: user.identity,
+            doc_count: user.doc_count,
+            article_count: user.article_count,
+            credit_count: user.credit_count,
+          }
         : null;
     } else {
       item.user = null;
