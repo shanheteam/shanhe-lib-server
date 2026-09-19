@@ -14,11 +14,12 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { JwtUser } from '../../auth/jwt-user.type';
 import { Biz } from '../../common/biz.exception';
 
-// 上传体积上限：文档较大，图片与编辑器资源较小；均限制单文件以阻断超大请求打满内存
+// 上传体积上限：仅作为防内存打满的兜底上限；
+// 文档大小的业务限制以后台「最大文档大小(MB)」配置为准（在 uploadDocument 中校验）
 const MB = 1024 * 1024;
 const documentOptions = {
   storage: memoryStorage(),
-  limits: { fileSize: 200 * MB, files: 1, fields: 10 },
+  limits: { fileSize: 1024 * MB, files: 1, fields: 10 },
 };
 const imageOptions = {
   storage: memoryStorage(),

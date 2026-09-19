@@ -297,6 +297,11 @@ export class AttachmentService {
     const allowed = allowedRaw.split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
     if (allowed.length && !allowed.includes(ext)) throw Biz.invalidArgument('不支持的文档类型');
 
+    const maxSizeMb = this.configService.getInt('security', 'max_document_size', 50);
+    if (file.size > maxSizeMb * 1024 * 1024) {
+      throw Biz.invalidArgument(`文档大小不能超过 ${maxSizeMb}MB`);
+    }
+
     if (!(await this.canAccessUploadDocument(userId))) {
       throw Biz.permissionDenied('没有权限上传文档');
     }
