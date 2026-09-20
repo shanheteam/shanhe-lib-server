@@ -999,6 +999,8 @@ export class OauthService {
         publicKey,
         algorithms: ['RS256'],
         ignoreExpiration: false,
+        issuer: 'shanhe-auth',
+        audience: 'shanhe-users',
       });
     } catch {
       return { valid: false, reason: 'invalid-token' };
@@ -1135,7 +1137,6 @@ export class OauthService {
       credit_count: user.credit_count,
       article_count: user.article_count,
       avatar: user.avatar,
-      identity: user.identity,
       student_id: user.student_id,
       realname: user.realname,
       login_at: user.login_at,
