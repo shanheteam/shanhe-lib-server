@@ -50,6 +50,11 @@ interface OauthBindBody {
   oauth_type?: number;
 }
 
+interface PasswordLoginBody {
+  username?: string;
+  password?: string;
+}
+
 @Injectable()
 export class OauthService {
   constructor(
@@ -186,6 +191,109 @@ export class OauthService {
       nickname,
       avatar,
       email,
+    });
+  }
+
+  /**
+   * 直接登录（ROPC）：用 user-center 账号密码换 token，不经过授权页。
+   * 请求 user-center token 端点的 password grant，再取用户信息并匹配/创建本地用户。
+   * 仅当 custom（user-center）客户端为 confidential 且启用时可用。
+   */
+  async passwordLogin(body: PasswordLoginBody): Promise<Record<string, unknown>> {
+    const oauthType = OAUTH_TYPE_CUSTOM;
+    const category = OAUTH_TYPE_TO_CATEGORY[oauthType];
+    const username = body?.username || '';
+    const password = body?.password || '';
+
+    if (!username || !password) {
+      throw Biz.invalidArgument('请输入账号和密码');
+    }
+    const enabled = this.config.getBool(category, 'enable');
+    if (!enabled) {
+      throw Biz.invalidArgument('该登录方式未启用');
+    }
+
+    const client_id = this.config.get(category, 'client_id');
+    const client_secret = this.config.get(category, 'client_secret');
+    const token_url = this.config.get(category, 'token_url');
+    const scope = (this.config.get(category, 'scope') || 'openid profile email').trim();
+
+    if (!client_id || !client_secret) {
+      throw Biz.internal('OAuth配置不完整');
+    }
+    if (!token_url) {
+      throw Biz.internal('自定义OAuth未配置token_url');
+    }
+
+    // 1. 用 password grant 换 token（凭据在 confidential 客户端下经 lib 后端转发）
+    const params = new URLSearchParams({
+      grant_type: 'password',
+      username,
+      password,
+      client_id,
+      client_secret,
+      scope,
+    });
+
+    let response: Response | undefined;
+    let lastErr: any;
+    const maxRetries = 3;
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        response = await fetch(token_url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: params.toString(),
+        });
+        break;
+      } catch (err: any) {
+        lastErr = err;
+        console.error("[OAuth] password token attempt " + attempt + "/" + maxRetries + " failed:", err.message);
+        if (attempt < maxRetries) {
+          await new Promise((r) => setTimeout(r, 1000 * attempt));
+        }
+      }
+    }
+    if (!response) {
+      throw Biz.internal(`获取token网络错误(重试${maxRetries}次): ${lastErr?.message}`);
+    }
+
+    const tokenData: any = await response.json();
+    if (!response.ok) {
+      if (tokenData?.error === 'invalid_grant') {
+        throw Biz.invalidArgument('账号或密码不正确');
+      }
+      if (tokenData?.error === 'access_denied') {
+        throw Biz.invalidArgument(tokenData?.error_description || '该账号不可登录');
+      }
+      throw Biz.invalidArgument(
+        tokenData?.error_description || tokenData?.message || `登录失败(${response.status})`,
+      );
+    }
+
+    const access_token = tokenData.access_token || '';
+    const refresh_token = tokenData.refresh_token || '';
+    const openid = String(tokenData.openid || tokenData.sub || '');
+    const tokenScope = tokenData.scope || scope || '';
+
+    if (!access_token || !openid) {
+      throw Biz.internal('获取用户标识失败');
+    }
+
+    // 2. 获取 user-center 用户信息（name/email 按 scope 开放）
+    const userInfo = await this.getUserInfo(oauthType, access_token, openid);
+
+    // 3. 匹配或创建 lib 本地用户，返回 { token, user }
+    return this.matchOrCreateUser({
+      oauthType,
+      openid,
+      access_token,
+      refresh_token,
+      scope: tokenScope,
+      unionid: '',
+      nickname: userInfo.name || userInfo.nickname || '',
+      avatar: userInfo.avatar || userInfo.avatar_url || userInfo.picture || '',
+      email: userInfo.email || '',
     });
   }
 

@@ -38,6 +38,16 @@ export class OauthController {
   }
 
   /**
+   * 直接登录：用 user-center 账号密码换 token，不经过授权页。
+   */
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @Public()
+  @Post('password-login')
+  passwordLogin(@Body() body: any) {
+    return this.oauthService.passwordLogin(body);
+  }
+
+  /**
    * Bind OAuth account to current logged-in user
    */
   @Throttle({ default: { limit: 20, ttl: 60_000 } })
