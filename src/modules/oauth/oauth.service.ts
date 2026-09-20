@@ -442,6 +442,7 @@ export class OauthService {
       avatar: string;
       email: string;
       student_id?: string;
+      mobile?: string;
     },
     opts: { skipEmailBind?: boolean } = {},
   ): Promise<Record<string, unknown>> {
@@ -456,6 +457,7 @@ export class OauthService {
       avatar,
       email,
       student_id,
+      mobile,
     } = data;
 
     // Check if this OAuth account is already bound
@@ -545,6 +547,7 @@ export class OauthService {
         email: randomEmail,
         avatar,
         student_id: student_id || '',
+        mobile: mobile || '',
         realname: nickname,
         login_at: now,
         created_at: now,
@@ -1014,12 +1017,14 @@ export class OauthService {
       let avatar = '';
       let email = '';
       let student_id = '';
+      let phone = '';
       try {
         const info: any = await this.getUserInfo(OAUTH_TYPE_CUSTOM, token, ucSubject);
         nickname = info?.nickname || info?.name || info?.login || '';
         avatar = info?.avatar || info?.avatar_url || info?.picture || '';
         email = info?.email || '';
         student_id = String(info?.student_id || '');
+        phone = String(info?.phone || '');
       } catch {
         /* 拉取失败仅缺昵称头像 */
       }
@@ -1042,6 +1047,7 @@ export class OauthService {
           avatar,
           email: bindEmail,
           student_id,
+          mobile: phone,
         }, { skipEmailBind: true });
         return { valid: true, token: bound.token, user: bound.user };
       } catch (e) {
@@ -1060,6 +1066,11 @@ export class OauthService {
       if (freshStudid && freshStudid !== user.student_id) {
         user.student_id = freshStudid;
         await this.userRepo.update(user.id, { student_id: freshStudid });
+      }
+      const freshPhone = String(info?.phone || '').trim();
+      if (freshPhone && freshPhone !== user.mobile) {
+        user.mobile = freshPhone;
+        await this.userRepo.update(user.id, { mobile: freshPhone });
       }
     } catch {
       /* 同步失败仅少一次刷新 */

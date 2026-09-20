@@ -146,6 +146,7 @@ export class UserService {
       article_count: user.article_count,
       avatar: user.avatar,
       identity: user.identity,
+      student_id: user.student_id,
       realname: user.realname,
       login_at: user.login_at,
       created_at: user.created_at,
