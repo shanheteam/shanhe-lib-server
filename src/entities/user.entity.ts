@@ -54,6 +54,9 @@ export class User {
   @Column({ type: 'char', length: 18, default: '' })
   identity: string;
 
+  @Column({ type: 'varchar', length: 64, default: '' })
+  student_id: string;
+
   @Column({ type: 'varchar', length: 20, default: '' })
   realname: string;
 

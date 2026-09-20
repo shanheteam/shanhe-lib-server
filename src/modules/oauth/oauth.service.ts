@@ -441,6 +441,7 @@ export class OauthService {
       nickname: string;
       avatar: string;
       email: string;
+      student_id?: string;
     },
     opts: { skipEmailBind?: boolean } = {},
   ): Promise<Record<string, unknown>> {
@@ -454,6 +455,7 @@ export class OauthService {
       nickname,
       avatar,
       email,
+      student_id,
     } = data;
 
     // Check if this OAuth account is already bound
@@ -542,6 +544,7 @@ export class OauthService {
         password: randomPassword,
         email: randomEmail,
         avatar,
+        student_id: student_id || '',
         realname: nickname,
         login_at: now,
         created_at: now,
@@ -1010,11 +1013,13 @@ export class OauthService {
       let nickname = '';
       let avatar = '';
       let email = '';
+      let student_id = '';
       try {
         const info: any = await this.getUserInfo(OAUTH_TYPE_CUSTOM, token, ucSubject);
         nickname = info?.nickname || info?.name || info?.login || '';
         avatar = info?.avatar || info?.avatar_url || info?.picture || '';
         email = info?.email || '';
+        student_id = String(info?.student_id || '');
       } catch {
         /* 拉取失败仅缺昵称头像 */
       }
@@ -1036,6 +1041,7 @@ export class OauthService {
           nickname,
           avatar,
           email: bindEmail,
+          student_id,
         }, { skipEmailBind: true });
         return { valid: true, token: bound.token, user: bound.user };
       } catch (e) {
@@ -1046,6 +1052,18 @@ export class OauthService {
 
     const user = await this.userRepo.findOne({ where: { id: binding.user_id } });
     if (!user) return { valid: false, reason: 'no-user' };
+
+    // 同步 user-center 学号到 lib 用户，保证「学号」展示真实值（失败不回退登录）
+    try {
+      const info: any = await this.getUserInfo(OAUTH_TYPE_CUSTOM, token, ucSubject);
+      const freshStudid = String(info?.student_id || '').trim();
+      if (freshStudid && freshStudid !== user.student_id) {
+        user.student_id = freshStudid;
+        await this.userRepo.update(user.id, { student_id: freshStudid });
+      }
+    } catch {
+      /* 同步失败仅少一次刷新 */
+    }
 
     const token2 = this.auth.createToken(Number(user.id));
     const groupIds = await this.getGroupIds(Number(user.id));
@@ -1085,6 +1103,7 @@ export class OauthService {
       article_count: user.article_count,
       avatar: user.avatar,
       identity: user.identity,
+      student_id: user.student_id,
       realname: user.realname,
       login_at: user.login_at,
       created_at: user.created_at,
