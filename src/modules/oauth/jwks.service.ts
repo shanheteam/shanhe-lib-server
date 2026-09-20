@@ -25,8 +25,10 @@ export class JwksService {
     if (this.keyCache.size === 0 || now - this.lastFetch > this.TTL) {
       await this.refresh(jwksUri);
     }
-    if (kid && this.keyCache.get(kid)) return this.keyCache.get(kid);
-    return this.keyCache.get('default') || this.keyCache.values().next().value;
+    // 仅按 kid 精确匹配：无 kid 或未知 kid 一律拒绝，杜绝密钥选择混淆
+    const key = kid ? this.keyCache.get(kid) : undefined;
+    if (!key) this.logger.warn('[jwks] kid 未命中，拒绝校验: ' + (kid || '(empty)'));
+    return key;
   }
 
   private resolveJwksUri(): string {
