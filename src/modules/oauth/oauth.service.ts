@@ -185,6 +185,10 @@ export class OauthService {
     }
 
     if (!response.ok) {
+      console.error(
+        `[OAuth] uc register failed status=${response.status} code=${String(data?.code || '')} body=`,
+        data,
+      );
       throw this.mapRegisterError(String(data?.code || ''), String(data?.message || ''), response.status);
     }
     return data;
@@ -201,8 +205,10 @@ export class OauthService {
       REGISTER_CONFLICT: '注册信息冲突',
       REGISTER_FAILED: '注册失败',
     };
-    const mapped = map[code] || message;
-    return Biz.invalidArgument(mapped || `注册失败(${status})`);
+    // 优先透传 uc 返回的具体 message（如"手机号格式不正确"），
+    // map 仅在 uc 未给出具体原因时作中文兜底，避免通用 code 覆盖真实原因。
+    const mapped = message || map[code] || `注册失败(${status})`;
+    return Biz.invalidArgument(mapped);
   }
 
   /**
