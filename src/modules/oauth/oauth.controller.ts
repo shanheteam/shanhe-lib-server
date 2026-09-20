@@ -67,8 +67,8 @@ export class OauthController {
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @Public()
   @Post('register')
-  register(@Body() body: any) {
-    return this.oauthService.register(body);
+  register(@Body() body: any, @Req() req: Request) {
+    return this.oauthService.register(body, req.ip);
   }
 
   /**
@@ -76,8 +76,8 @@ export class OauthController {
    */
   @Public()
   @Get('available-student-id')
-  availableStudentId() {
-    return this.oauthService.availableStudentId();
+  availableStudentId(@Req() req: Request) {
+    return this.oauthService.availableStudentId(req.ip);
   }
 
   /**

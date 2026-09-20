@@ -128,7 +128,13 @@ export class OauthService {
         oauth.authorize_url_base = authorizeUrl && authorizeUrl.startsWith('http') ? authorizeUrl : '';
       }
 
-      oauths.push(oauth);
+
+      // logout 与 authorize 同基址：user 端 /oauth/logout。优先由后端推导，避免前端依赖
+      // authorize_url_base 以 /authorize 结尾改写导致不跳转（SLO 失效）。
+      try {
+        const ucApi = this.ucBase().replace(/\/$/, '');
+        if (ucApi) oauth.logout_url = `${ucApi}/oauth/logout`;
+      } catch { /* 无 token_url 时不提供 logout_url，前端走兜底 */ }      oauths.push(oauth);
     }
 
     return { oauths };
@@ -157,7 +163,7 @@ export class OauthService {
    * 透传 { email, real_name, password, student_id }；成功返回 uc 的 { message, userId }；
    * 非 2xx 时把 uc 的 { code, message } 映射为 Biz 错误。
    */
-  async register(body: UcRegisterBody): Promise<Record<string, unknown>> {
+  async register(body: UcRegisterBody, clientIp?: string): Promise<Record<string, unknown>> {
     const ucBase = this.ucBase();
     const payload: Record<string, string> = {};
     if (body?.email) payload.email = body.email;
@@ -168,9 +174,12 @@ export class OauthService {
 
     let response: Response | undefined;
     try {
+      const regHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
+      // 透传真实客户端 IP，供 user 侧按真实来源做注册限流/审计（需 user 端 TRUST_PROXY 信任 lib 服务器 IP）
+      if (clientIp) regHeaders['X-Forwarded-For'] = clientIp;
       response = await fetch(`${ucBase}/auth/register`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: regHeaders,
         body: JSON.stringify(payload),
       });
     } catch (err: any) {
@@ -214,12 +223,14 @@ export class OauthService {
   /**
    * 获取一个随机学号：GET ucBase/users/meta/available-student-id?year=2027 → { student_id }。
    */
-  async availableStudentId(): Promise<UcStudentIdResult> {
+  async availableStudentId(clientIp?: string): Promise<UcStudentIdResult> {
     const ucBase = this.ucBase();
     const url = `${ucBase}/users/meta/available-student-id?year=2027`;
     let response: Response | undefined;
+    const stuHeaders: Record<string, string> = {};
+    if (clientIp) stuHeaders['X-Forwarded-For'] = clientIp;
     try {
-      response = await fetch(url);
+      response = await fetch(url, { headers: stuHeaders });
     } catch (err: any) {
       throw Biz.internal(`获取随机学号网络错误: ${err?.message}`);
     }
