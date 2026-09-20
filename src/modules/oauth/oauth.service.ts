@@ -7,7 +7,7 @@ import { JwtService } from '@nestjs/jwt';
 import { Request } from 'express';
 import { AuthService } from '../../auth/auth.service';
 import { JwksService } from './jwks.service';
-import { Biz } from '../../common/biz.exception';
+import { Biz, BizException } from '../../common/biz.exception';
 import { makePassword, randomString } from '../../common/password.util';
 
 // OAuth type constants (aligned with frontend enum)
@@ -56,6 +56,18 @@ interface OauthBindBody {
 interface PasswordLoginBody {
   username?: string;
   password?: string;
+}
+
+interface UcRegisterBody {
+  email?: string;
+  real_name?: string;
+  password?: string;
+  student_id?: string;
+  email_code?: string;
+}
+
+interface UcStudentIdResult {
+  student_id?: string;
 }
 
 @Injectable()
@@ -120,6 +132,99 @@ export class OauthService {
     }
 
     return { oauths };
+  }
+
+  /**
+   * 推导 user 统一认证中心（uc）API 基址。
+   * oauthCustom.token_url 形如 https://apiuser.shanhe.co/api/oauth/token，
+   * uc 基址 = token_url 去掉路径部分 + /api，即 https://apiuser.shanhe.co/api。
+   */
+  private ucBase(): string {
+    const category = OAUTH_TYPE_TO_CATEGORY[OAUTH_TYPE_CUSTOM];
+    const tokenUrl = String(this.config.get(category, 'token_url') || '').trim();
+    if (!tokenUrl) {
+      throw Biz.internal('自定义OAuth未配置token_url');
+    }
+    const idx = tokenUrl.lastIndexOf('/api');
+    if (idx < 0) {
+      throw Biz.internal('自定义OAuth token_url 格式异常');
+    }
+    return tokenUrl.slice(0, idx + '/api'.length);
+  }
+
+  /**
+   * 注册：lib 后端转发到 user 统一认证中心 POST ucBase/auth/register。
+   * 透传 { email, real_name, password, student_id }；成功返回 uc 的 { message, userId }；
+   * 非 2xx 时把 uc 的 { code, message } 映射为 Biz 错误。
+   */
+  async register(body: UcRegisterBody): Promise<Record<string, unknown>> {
+    const ucBase = this.ucBase();
+    const payload: Record<string, string> = {};
+    if (body?.email) payload.email = body.email;
+    if (body?.real_name) payload.real_name = body.real_name;
+    if (body?.password) payload.password = body.password;
+    if (body?.student_id) payload.student_id = body.student_id;
+    // email_code 可选，忽略（user 侧无邮箱验证码要求）
+
+    let response: Response | undefined;
+    try {
+      response = await fetch(`${ucBase}/auth/register`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+    } catch (err: any) {
+      throw Biz.internal(`注册网络错误: ${err?.message}`);
+    }
+
+    let data: any = {};
+    try {
+      data = await response.json();
+    } catch {
+      /* 忽略空响应体 */
+    }
+
+    if (!response.ok) {
+      throw this.mapRegisterError(String(data?.code || ''), String(data?.message || ''), response.status);
+    }
+    return data;
+  }
+
+  /** 把 uc 注册错误 code 映射为中文 Biz 异常（429 透出 uc 的 message）。 */
+  private mapRegisterError(code: string, message: string, status: number): BizException {
+    if (code === 'REGISTER_IP_RATE_LIMITED' || status === 429) {
+      return Biz.resourceExhausted(message || '注册过于频繁，请24小时后再试');
+    }
+    const map: Record<string, string> = {
+      EMAIL_OCCUPIED: '该邮箱已被注册',
+      STUDENT_ID_OCCUPIED: '该学号已被占用',
+      REGISTER_CONFLICT: '注册信息冲突',
+      REGISTER_FAILED: '注册失败',
+    };
+    const mapped = map[code] || message;
+    return Biz.invalidArgument(mapped || `注册失败(${status})`);
+  }
+
+  /**
+   * 获取一个随机学号：GET ucBase/users/meta/available-student-id?year=2027 → { student_id }。
+   */
+  async availableStudentId(): Promise<UcStudentIdResult> {
+    const ucBase = this.ucBase();
+    const url = `${ucBase}/users/meta/available-student-id?year=2027`;
+    let response: Response | undefined;
+    try {
+      response = await fetch(url);
+    } catch (err: any) {
+      throw Biz.internal(`获取随机学号网络错误: ${err?.message}`);
+    }
+    if (!response.ok) {
+      throw Biz.internal(`获取随机学号失败: ${response.status}`);
+    }
+    try {
+      return (await response.json()) as UcStudentIdResult;
+    } catch {
+      return {};
+    }
   }
 
   /**

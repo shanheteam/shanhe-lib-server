@@ -62,6 +62,25 @@ export class OauthController {
   }
 
   /**
+   * 注册：转发到 user 统一认证中心（内联注册表单使用）。
+   */
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @Public()
+  @Post('register')
+  register(@Body() body: any) {
+    return this.oauthService.register(body);
+  }
+
+  /**
+   * 获取随机学号：GET ucBase/users/meta/available-student-id?year=2027 → { student_id }。
+   */
+  @Public()
+  @Get('available-student-id')
+  availableStudentId() {
+    return this.oauthService.availableStudentId();
+  }
+
+  /**
    * 静默建立 lib 会话：浏览器带着 .shanhe.co 共享 access_token cookie 时，
    * 校验 user-center 身份并经 UserOauth 绑定签发 lib token（user-center 登录 → lib 自动登录）。
    */
