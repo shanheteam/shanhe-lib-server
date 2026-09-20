@@ -320,6 +320,7 @@ export class OauthService {
       avatar: string;
       email: string;
     },
+    opts: { skipEmailBind?: boolean } = {},
   ): Promise<Record<string, unknown>> {
     const {
       oauthType,
@@ -372,8 +373,8 @@ export class OauthService {
       };
     }
 
-    // New OAuth account - check if email matches existing user
-    if (email) {
+    // New OAuth account - check if email matches existing user（sso 自动建号跳过，避免误绑到现有账号）
+    if (!opts?.skipEmailBind && email) {
       const existingUser = await this.userRepo.findOne({ where: { email } });
       if (existingUser) {
         // Bind to existing user by email
@@ -896,6 +897,13 @@ export class OauthService {
         /* 拉取失败仅缺昵称头像 */
       }
       try {
+        // user-center 真实邮箱优先写入新账号（users.email 唯一索引）；被 lib 其它账号占用时
+        // 降级 openid 派生邮箱。skipEmailBind=true 屏蔽"按 email 绑到现有账号"，避免误关联。
+        let bindEmail = '';
+        if (email) {
+          const clash: any = await this.userRepo.findOne({ where: { email } }).catch(() => null);
+          if (!clash) bindEmail = email;
+        }
         const bound = await this.matchOrCreateUser({
           oauthType: OAUTH_TYPE_CUSTOM,
           openid: ucSubject,
@@ -905,10 +913,8 @@ export class OauthService {
           unionid: '',
           nickname,
           avatar,
-          // 不向 matchOrCreateUser 传 email：自动建号不应走"按 email 绑定现有账号"分支，
-          // 也避免 lib user 表 email 唯一索引冲突导致插入失败(bind-failed)。改用 openid 派生邮箱。
-          email: '',
-        });
+          email: bindEmail,
+        }, { skipEmailBind: true });
         return { valid: true, token: bound.token, user: bound.user };
       } catch (e) {
         console.error('[SSO] auto-bind new user failed:', (e as Error)?.message);
