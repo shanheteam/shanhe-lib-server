@@ -323,13 +323,21 @@ export class UserService {
     if (targetId <= 0) targetId = user.userId;
 
     const patch: Partial<User> = {};
-    const fields = ['mobile', 'email', 'address', 'signature', 'avatar', 'realname', 'identity', 'student_id'] as const;
+    const fields = ['mobile', 'email', 'address', 'signature', 'avatar', 'realname'] as const;
     for (const field of fields) {
       const value = (body as any)[field];
       if (value !== undefined) (patch as any)[field] = value;
     }
-    if (isAdmin && body.remark !== undefined) {
-      patch.remark = body.remark;
+    // 敏感字段（身份证 identity / 学号 student_id）仅管理员可改，普通用户即使提交也会被忽略
+    if (isAdmin) {
+      const sensitive = ['identity', 'student_id'] as const;
+      for (const f of sensitive) {
+        const v = (body as any)[f];
+        if (v !== undefined) (patch as any)[f] = v;
+      }
+      if (body.remark !== undefined) {
+        patch.remark = body.remark;
+      }
     }
     patch.updated_at = new Date();
 

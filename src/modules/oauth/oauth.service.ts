@@ -1018,8 +1018,10 @@ export class OauthService {
       let email = '';
       let student_id = '';
       let phone = '';
+      let ssoInfo: any = null;
       try {
         const info: any = await this.getUserInfo(OAUTH_TYPE_CUSTOM, token, ucSubject);
+        ssoInfo = info;
         nickname = info?.nickname || info?.name || info?.login || '';
         avatar = info?.avatar || info?.avatar_url || info?.picture || '';
         email = info?.email || '';
@@ -1027,6 +1029,10 @@ export class OauthService {
         phone = String(info?.phone || '');
       } catch {
         /* 拉取失败仅缺昵称头像 */
+      }
+      // 方案2：实时校验 user 状态，封禁/删除账号拒绝 SSO 登录（拉取失败视为活跃，避免误杀）
+      if (ssoInfo && !this.isUcUserActive(ssoInfo)) {
+        return { valid: false, reason: 'user-inactive' };
       }
       try {
         // user-center 真实邮箱优先写入新账号（users.email 唯一索引）；被 lib 其它账号占用时
@@ -1062,6 +1068,10 @@ export class OauthService {
     // 同步 user-center 学号到 lib 用户，保证「学号」展示真实值（失败不回退登录）
     try {
       const info: any = await this.getUserInfo(OAUTH_TYPE_CUSTOM, token, ucSubject);
+      // 方案2：实时校验 user 状态，封禁/删除账号拒绝 SSO 登录
+      if (info && !this.isUcUserActive(info)) {
+        return { valid: false, reason: 'user-inactive' };
+      }
       const freshStudid = String(info?.student_id || '').trim();
       if (freshStudid && freshStudid !== user.student_id) {
         user.student_id = freshStudid;
@@ -1089,6 +1099,12 @@ export class OauthService {
       token: token2,
       user: this.buildUserJson(user, groupIds),
     };
+  }
+
+  /** 用户是否活跃：uc userinfo 的 status；为空(兼容未返回)视为活跃，'active' 活跃，其余(disabled/banned)拒绝 */
+  private isUcUserActive(info: any): boolean {
+    const status = String(info?.status || '');
+    return !status || status === 'active';
   }
 
   private readCookie(req: Request, name: string): string {
