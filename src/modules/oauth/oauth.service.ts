@@ -1072,6 +1072,12 @@ export class OauthService {
         user.mobile = freshPhone;
         await this.userRepo.update(user.id, { mobile: freshPhone });
       }
+      // uc 为真源：同步头像
+      const freshAvatar = String(info?.avatar || '');
+      if (freshAvatar && freshAvatar !== user.avatar) {
+        user.avatar = freshAvatar;
+        await this.userRepo.update(user.id, { avatar: freshAvatar });
+      }
     } catch {
       /* 同步失败仅少一次刷新 */
     }
