@@ -33,9 +33,13 @@ export class JwksService {
     const configured = this.config.get('oauthCustom', 'jwks_uri', '').trim();
     if (configured) return configured;
     const tokenUrl = this.config.get('oauthCustom', 'token_url', '');
-    // 形如 https://apiuser.shanhe.co/api/oauth/token → base + /oauth/jwks
+    // 形如 https://apiuser.shanhe.co/api/oauth/token 或 https://apiuser.shanhe.co/oauth/token
+    // → 派生 /jwks。注意保留可选的 /api 前缀（m[2]），否则拼出 /oauth/jwks 会 404。
     const m = tokenUrl.match(/^(https?:\/\/[^/]+)(\/api)?(\/oauth)\/token$/);
-    return m ? m[1] + m[3] + '/jwks' : '';
+    if (m) return m[1] + (m[2] || '') + m[3] + '/jwks';
+    // 兜底：token_url 只要以 /token 结尾，都替换为其所在目录的 /jwks
+    const j = tokenUrl.replace(/\/token\/?$/, '/jwks');
+    return j !== tokenUrl ? j : '';
   }
 
   private async refresh(jwksUri: string): Promise<void> {
