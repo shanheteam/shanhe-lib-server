@@ -22,17 +22,7 @@ import { toNumberArray } from '../../common/query.util';
 export class UserController {
   constructor(private readonly userService: UserService) {}
 
-  @Throttle({ default: { limit: 5, ttl: 60_000 } })
-  @Post('register')
-  register(@Body() body: any, @Ip() ip: string) {
-    return this.userService.register(body, ip);
-  }
 
-  @Throttle({ default: { limit: 10, ttl: 60_000 } })
-  @Post('login')
-  login(@Body() body: any, @Ip() ip: string) {
-    return this.userService.login(body, ip);
-  }
 
   @RequireLogin()
   @Delete('logout')
@@ -45,11 +35,6 @@ export class UserController {
     return this.userService.getUser(id === undefined ? undefined : Number(id), user);
   }
 
-  @RequireLogin()
-  @Put('password')
-  updateUserPassword(@Body() body: any, @CurrentUser() user: JwtUser) {
-    return this.userService.updateUserPassword(body, user);
-  }
 
   @RequireLogin()
   @Put('profile')
@@ -143,21 +128,6 @@ export class UserController {
     return this.userService.listUserGroup(user);
   }
 
-  @Throttle({ default: { limit: 5, ttl: 60_000 } })
-  @Post('findpassword/stepone')
-  findPasswordStepOne(@Body() body: any, @Ip() ip: string) {
-    return this.userService.findPasswordStepOne(body, ip);
-  }
 
-  @Throttle({ default: { limit: 10, ttl: 60_000 } })
-  @Put('findpassword/steptwo')
-  findPasswordStepTwo(@Body() body: any) {
-    return this.userService.findPasswordStepTwo(body);
-  }
 
-  @Throttle({ default: { limit: 5, ttl: 60_000 } })
-  @Post('email/code')
-  sendEmailCode(@Body() body: any, @Ip() ip: string) {
-    return this.userService.sendEmailCode(body, ip);
-  }
 }

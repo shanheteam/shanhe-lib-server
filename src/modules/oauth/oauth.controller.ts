@@ -81,6 +81,27 @@ export class OauthController {
     return this.oauthService.ssoSession(req);
   }
 
+  /**
+   * SSO 共享 cookie 清除：lib 无法跳转 user-center 登出端点时（如授权地址配置异常），
+   * 由 lib 后端直接下发 Set-Cookie 清掉 .shanhe.co 域的 access_token，
+   * 避免刷新后 SSO 静默探测把已登出的会话"带回来"（退出无效）。
+   */
+  @Public()
+  @Post('sso/logout')
+  ssoLogout(@Req() req: Request, @Res({ passthrough: true }) res: Response) {
+    const isProd = process.env.NODE_ENV === 'production';
+    const host = (req.hostname || '').toLowerCase();
+    const parts = host.split('.');
+    let domain = '';
+    if (/\.co$/.test(host) && parts.length >= 3) domain = '.' + parts.slice(-2).join('.');
+    const secure = isProd ? '; Secure' : '';
+    res.setHeader(
+      'Set-Cookie',
+      `access_token=; Path=/; HttpOnly; SameSite=Lax${domain ? `; Domain=${domain}` : ''}${secure}; Max-Age=0`,
+    );
+    return { ok: true };
+  }
+
   /** 写 user-center 共享 cookie 的通用工具：把 user-center access_token 落在 .shanhe.co 域。 */
   private setSharedAccessTokenCookie(req: Request, res: Response, token: string): void {
     const isProd = process.env.NODE_ENV === 'production';

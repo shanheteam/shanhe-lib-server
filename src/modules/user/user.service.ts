@@ -14,7 +14,7 @@ import {
   Logout,
 } from '../../entities';
 import { Biz } from '../../common/biz.exception';
-import { checkPassword, makePassword, needsRehash, randomString } from '../../common/password.util';
+import { checkPassword, makePassword, randomString } from '../../common/password.util';
 import { ConfigService } from '../../config/config.service';
 import { AuthService } from '../../auth/auth.service';
 import { PermissionService } from '../../auth/permission.service';
@@ -29,7 +29,6 @@ const EMAIL_CODE_REGISTER = 0;
 const EMAIL_CODE_LOGIN = 1;
 const EMAIL_CODE_FIND_PASSWORD = 2;
 
-const DYNAMIC_TYPE_REGISTER = 6;
 const DYNAMIC_TYPE_SIGN = 11;
 
 // 用户公开字段（非管理员查询他人资料时仅返回这些字段）
@@ -49,19 +48,7 @@ const PUBLIC_FIELDS = [
   'login_at',
 ];
 
-interface RegisterBody {
-  password?: string;
-  captcha?: string;
-  captcha_id?: string;
-  email?: string;
-  code?: string;
-}
 
-interface UpdatePasswordBody {
-  id?: number;
-  old_password?: string;
-  new_password?: string;
-}
 
 interface ProfileBody {
   id?: number;
@@ -95,14 +82,6 @@ interface ListUserQuery {
   group_id?: string | string[] | number | number[];
 }
 
-interface FindPasswordBody {
-  email?: string;
-  password?: string;
-  captcha?: string;
-  captcha_id?: string;
-  code?: string;
-  token?: string;
-}
 
 interface SendEmailCodeBody {
   email?: string;
@@ -295,113 +274,6 @@ export class UserService {
     }
   }
 
-  // ---------- 注册 / 登录 ----------
-
-  async register(body: RegisterBody, ip = ''): Promise<{ token: string; user: Record<string, unknown> }> {
-    const password = body.password ?? '';
-    const email = String(body.email ?? '').trim();
-
-    if (password.length < 6) {
-      throw Biz.invalidArgument('密码长度不能小于6位');
-    }
-    if (!this.isValidEmail(email)) {
-      throw Biz.invalidArgument('邮箱格式不正确');
-    }
-
-    if (this.config.getBool('security', 'enable_captcha_register')) {
-      if (!body.captcha_id || !body.captcha) {
-        throw Biz.invalidArgument('请输入验证码');
-      }
-      if (!this.captcha.verify(body.captcha_id, body.captcha, true)) {
-        throw Biz.invalidArgument('验证码错误');
-      }
-    }
-
-    const existEmail = await this.userRepo.findOne({ where: { email } });
-    if (existEmail) {
-      throw Biz.alreadyExists('邮箱已存在');
-    }
-
-    const credit = this.config.getInt('score', 'register', 0);
-    const now = new Date();
-    const saved = await this.userRepo.save(
-      this.userRepo.create({
-        password: makePassword(password),
-        email,
-        register_ip: ip || '',
-        last_login_ip: ip || '',
-        login_at: now,
-        credit_count: credit,
-        created_at: now,
-        updated_at: now,
-      }),
-    );
-
-    // 注册默认加入「普通用户」组；不存在默认组则不加入
-    const defaultGroup = await this.groupRepo.findOne({ where: { is_default: true } });
-    if (defaultGroup) {
-      await this.userGroupRepo.save(
-        this.userGroupRepo.create({
-          user_id: Number(saved.id),
-          group_id: Number(defaultGroup.id),
-          created_at: now,
-          updated_at: now,
-        }),
-      );
-    }
-
-    if (credit > 0) {
-      await this.dynamicRepo.save(
-        this.dynamicRepo.create({
-          user_id: Number(saved.id),
-          type: DYNAMIC_TYPE_REGISTER,
-          content: `成功注册成网站会员，获得 ${credit} 积分奖励`,
-          created_at: now,
-          updated_at: now,
-        }),
-      );
-    }
-
-    const token = this.auth.createToken(Number(saved.id));
-    const groupIds = await this.getGroupIds(Number(saved.id));
-    return { token, user: this.buildUserJson(saved, groupIds) };
-  }
-
-  async login(body: RegisterBody, ip = ''): Promise<{ token: string; user: Record<string, unknown> }> {
-    const email = String(body.email ?? '').trim();
-    const password = body.password ?? '';
-
-    if (this.config.getBool('security', 'enable_captcha_login')) {
-      if (!body.captcha_id || !body.captcha) {
-        throw Biz.invalidArgument('请输入验证码');
-      }
-      if (!this.captcha.verify(body.captcha_id, body.captcha, true)) {
-        throw Biz.invalidArgument('验证码错误');
-      }
-    }
-
-    const user = await this.userRepo.findOne({
-      where: { email },
-    });
-    if (!user || !checkPassword(password, user.password)) {
-      throw Biz.invalidArgument('邮箱或密码不正确');
-    }
-
-    const update: Record<string, unknown> = {
-      login_at: new Date(),
-      last_login_ip: ip || '',
-    };
-    // 存量 md5 哈希在登录成功后自动升级为 bcrypt，用户无感
-    if (needsRehash(user.password)) {
-      update.password = makePassword(password);
-    }
-    await this.userRepo.update(user.id, update);
-
-    const token = this.auth.createToken(Number(user.id));
-    const groupIds = await this.getGroupIds(Number(user.id));
-    const fresh = await this.userRepo.findOne({ where: { id: user.id } });
-    return { token, user: this.buildUserJson(fresh || user, groupIds) };
-  }
 
   async logout(user: JwtUser): Promise<Record<string, never>> {
     await this.logoutRepo.save(
@@ -440,45 +312,6 @@ export class UserService {
       : this.buildPublicUserJson(target, groupIds);
   }
 
-  async updateUserPassword(body: UpdatePasswordBody, user: JwtUser): Promise<Record<string, never>> {
-    const newPassword = body.new_password ?? '';
-    if (newPassword.length < 6) {
-      throw Biz.invalidArgument('密码长度不能小于6位');
-    }
-
-    const targetId = Number(body.id) || 0;
-
-    // 修改自己的密码：验证旧密码
-    if (targetId <= 0 || targetId === user.userId) {
-      const existUser = await this.userRepo.findOne({ where: { id: user.userId } });
-      if (!existUser) {
-        throw Biz.unauthenticated('用户不存在');
-      }
-      if (!checkPassword(body.old_password ?? '', existUser.password)) {
-        throw Biz.invalidArgument('原密码不正确');
-      }
-      await this.userRepo.update(user.userId, {
-        password: makePassword(newPassword),
-        updated_at: new Date(),
-      });
-      return {};
-    }
-
-    // 管理员重置他人密码：需要权限
-    const ok = await this.permissionService.check(user.userId, '/api.v1.UserAPI/UpdateUserPassword');
-    if (!ok) {
-      throw Biz.permissionDenied('您没有权限重置他人密码');
-    }
-    // root 保护：仅 root 可重置 root 密码，防止低权限管理员接管超级管理员
-    if (targetId === ROOT_USER_ID && user.userId !== ROOT_USER_ID) {
-      throw Biz.permissionDenied('您没有权限重置超级管理员密码');
-    }
-    await this.userRepo.update(targetId, {
-      password: makePassword(newPassword),
-      updated_at: new Date(),
-    });
-    return {};
-  }
 
   async updateUserProfile(body: ProfileBody, user: JwtUser): Promise<Record<string, never>> {
     const isAdmin = await this.permissionService.isAdmin(user.userId);
@@ -835,81 +668,6 @@ export class UserService {
     return { group: groups };
   }
 
-  // ---------- 找回密码 / 邮箱验证码 ----------
-
-  async findPasswordStepOne(body: FindPasswordBody, ip = ''): Promise<Record<string, never>> {
-    const email = String(body.email ?? '').trim();
-    if (!this.isValidEmail(email)) {
-      throw Biz.invalidArgument('邮箱格式不正确');
-    }
-
-    if (this.config.getBool('security', 'enable_captcha_find_password')) {
-      if (!body.captcha_id || !body.captcha) {
-        throw Biz.invalidArgument('请输入验证码');
-      }
-      if (!this.captcha.verify(body.captcha_id, body.captcha, false)) {
-        throw Biz.invalidArgument('验证码错误');
-      }
-    }
-
-    const user = await this.userRepo.findOne({ where: { email } });
-    if (!user) {
-      throw Biz.notFound('用户不存在');
-    }
-
-    await this.sendCodeAndStore(email, EMAIL_CODE_FIND_PASSWORD, ip);
-    return {};
-  }
-
-  async findPasswordStepTwo(body: FindPasswordBody): Promise<Record<string, never>> {
-    const email = String(body.email ?? '').trim();
-    const password = body.password ?? '';
-
-    if (!this.isValidEmail(email)) {
-      throw Biz.invalidArgument('邮箱格式不正确');
-    }
-    if (password.length < 6) {
-      throw Biz.invalidArgument('密码长度不能小于6位');
-    }
-
-    if (this.config.getBool('security', 'enable_captcha_find_password')) {
-      if (!body.captcha_id || !body.captcha) {
-        throw Biz.invalidArgument('请输入验证码');
-      }
-      if (!this.captcha.verify(body.captcha_id, body.captcha, true)) {
-        throw Biz.invalidArgument('验证码错误');
-      }
-    }
-
-    if (!body.code) {
-      throw Biz.invalidArgument('邮箱验证码错误');
-    }
-
-    const code = await this.emailCodeRepo.findOne({
-      where: { email, code_type: EMAIL_CODE_FIND_PASSWORD },
-      order: { id: 'DESC' as const },
-    });
-    if (!code || code.code !== body.code || code.is_used) {
-      throw Biz.invalidArgument('邮箱验证码错误');
-    }
-    const expireAt = (code.created_at ? new Date(code.created_at).getTime() : Date.now()) + 30 * 60 * 1000;
-    if (expireAt < Date.now()) {
-      throw Biz.invalidArgument('邮箱验证码已过期');
-    }
-
-    const user = await this.userRepo.findOne({ where: { email } });
-    if (!user) {
-      throw Biz.notFound('用户不存在');
-    }
-
-    await this.userRepo.update(user.id, {
-      password: makePassword(password),
-      updated_at: new Date(),
-    });
-    await this.emailCodeRepo.update(code.id, { is_used: true });
-
-    return {};
-  }
 
   async sendEmailCode(body: SendEmailCodeBody, ip = ''): Promise<Record<string, never>> {
     const email = String(body.email ?? '').trim();
