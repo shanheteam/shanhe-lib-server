@@ -323,7 +323,7 @@ export class UserService {
     if (targetId <= 0) targetId = user.userId;
 
     const patch: Partial<User> = {};
-    const fields = ['mobile', 'email', 'address', 'signature', 'avatar', 'realname', 'identity'] as const;
+    const fields = ['mobile', 'email', 'address', 'signature', 'avatar', 'realname', 'identity', 'student_id'] as const;
     for (const field of fields) {
       const value = (body as any)[field];
       if (value !== undefined) (patch as any)[field] = value;
