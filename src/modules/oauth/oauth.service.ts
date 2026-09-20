@@ -905,7 +905,9 @@ export class OauthService {
           unionid: '',
           nickname,
           avatar,
-          email,
+          // 不向 matchOrCreateUser 传 email：自动建号不应走"按 email 绑定现有账号"分支，
+          // 也避免 lib user 表 email 唯一索引冲突导致插入失败(bind-failed)。改用 openid 派生邮箱。
+          email: '',
         });
         return { valid: true, token: bound.token, user: bound.user };
       } catch (e) {
