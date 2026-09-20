@@ -881,7 +881,38 @@ export class OauthService {
     const binding = await this.userOauthRepo.findOne({
       where: { oauth_type: OAUTH_TYPE_CUSTOM, openid: ucSubject },
     });
-    if (!binding) return { valid: false, reason: 'not-bound' };
+    if (!binding) {
+      // 新用户：从未在 lib 绑定（oauth_type=6/openid 无记录），自动建本地账号并绑定，
+      // 实现"user 新用户也能自动登录 lib"。尽力拉取 user-center 用户信息作昵称/头像，失败不阻塞登录。
+      let nickname = '';
+      let avatar = '';
+      let email = '';
+      try {
+        const info: any = await this.getUserInfo(OAUTH_TYPE_CUSTOM, token, ucSubject);
+        nickname = info?.nickname || info?.name || info?.login || '';
+        avatar = info?.avatar || info?.avatar_url || info?.picture || '';
+        email = info?.email || '';
+      } catch {
+        /* 拉取失败仅缺昵称头像 */
+      }
+      try {
+        const bound = await this.matchOrCreateUser({
+          oauthType: OAUTH_TYPE_CUSTOM,
+          openid: ucSubject,
+          access_token: token,
+          refresh_token: '',
+          scope: '',
+          unionid: '',
+          nickname,
+          avatar,
+          email,
+        });
+        return { valid: true, token: bound.token, user: bound.user };
+      } catch (e) {
+        console.error('[SSO] auto-bind new user failed:', (e as Error)?.message);
+        return { valid: false, reason: 'bind-failed' };
+      }
+    }
 
     const user = await this.userRepo.findOne({ where: { id: binding.user_id } });
     if (!user) return { valid: false, reason: 'no-user' };
