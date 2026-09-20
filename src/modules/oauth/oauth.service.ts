@@ -3,7 +3,10 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { User, UserGroup, Group, UserOauth } from '../../entities';
 import { ConfigService } from '../../config/config.service';
+import { JwtService } from '@nestjs/jwt';
+import { Request } from 'express';
 import { AuthService } from '../../auth/auth.service';
+import { JwksService } from './jwks.service';
 import { Biz } from '../../common/biz.exception';
 import { makePassword, randomString } from '../../common/password.util';
 
@@ -68,6 +71,8 @@ export class OauthService {
     private readonly userOauthRepo: Repository<UserOauth>,
     private readonly config: ConfigService,
     private readonly auth: AuthService,
+    private readonly jwtService: JwtService,
+    private readonly jwks: JwksService,
   ) {}
 
   /**
@@ -284,7 +289,7 @@ export class OauthService {
     const userInfo = await this.getUserInfo(oauthType, access_token, openid);
 
     // 3. 匹配或创建 lib 本地用户，返回 { token, user }
-    return this.matchOrCreateUser({
+    const loginResult = await this.matchOrCreateUser({
       oauthType,
       openid,
       access_token,
@@ -295,6 +300,8 @@ export class OauthService {
       avatar: userInfo.avatar || userInfo.avatar_url || userInfo.picture || '',
       email: userInfo.email || '',
     });
+    // 把 user-center 的 access_token 一并带出，供 controller 写共享 .shanhe.co cookie（Cookie 真源 SSO）
+    return { ...loginResult, uc_access_token: access_token };
   }
 
   /**
@@ -832,6 +839,71 @@ export class OauthService {
   private async getGroupIds(userId: number): Promise<number[]> {
     const rows = await this.userGroupRepo.find({ where: { user_id: userId } });
     return rows.map((r) => Number(r.group_id)).filter((id) => id > 0);
+  }
+
+  /**
+   * SSO：校验浏览器带入的 user-center 共享 access_token cookie（Cookie 真源）。
+   * 用 user-center RS256 公钥校验其 JWT，提取 sub（user-center 用户标识）→ 经 UserOauth 绑定
+   * 定位 lib 本地用户 → 签发 lib token。无 cookie / 校验失败 / 未绑定 → 静默返回 { valid:false }，不建账号。
+   */
+  async ssoSession(req: Request): Promise<Record<string, unknown>> {
+    const token = this.readCookie(req, 'access_token');
+    if (!token) return { valid: false, reason: 'no-cookie' };
+
+    let kid: string | undefined;
+    try {
+      const header = token.split('.')[0];
+      if (header) {
+        const parsed = JSON.parse(Buffer.from(header, 'base64url').toString('utf8'));
+        kid = parsed?.kid;
+      }
+    } catch {
+      /* ignore */
+    }
+
+    const publicKey = await this.jwks.getPublicKey(kid);
+    if (!publicKey) return { valid: false, reason: 'no-jwks' };
+
+    let payload: any;
+    try {
+      payload = this.jwtService.verify(token, {
+        publicKey,
+        algorithms: ['RS256'],
+        ignoreExpiration: false,
+      });
+    } catch {
+      return { valid: false, reason: 'invalid-token' };
+    }
+
+    const ucSubject = String(payload?.sub || payload?.openid || '');
+    if (!ucSubject) return { valid: false, reason: 'no-sub' };
+
+    const binding = await this.userOauthRepo.findOne({
+      where: { oauth_type: OAUTH_TYPE_CUSTOM, openid: ucSubject },
+    });
+    if (!binding) return { valid: false, reason: 'not-bound' };
+
+    const user = await this.userRepo.findOne({ where: { id: binding.user_id } });
+    if (!user) return { valid: false, reason: 'no-user' };
+
+    const token2 = this.auth.createToken(Number(user.id));
+    const groupIds = await this.getGroupIds(Number(user.id));
+    return {
+      valid: true,
+      token: token2,
+      user: this.buildUserJson(user, groupIds),
+    };
+  }
+
+  private readCookie(req: Request, name: string): string {
+    const raw = req.headers.cookie || '';
+    for (const part of raw.split(';')) {
+      const idx = part.indexOf('=');
+      if (idx === -1) continue;
+      const key = part.slice(0, idx).trim();
+      if (key === name) return decodeURIComponent(part.slice(idx + 1).trim());
+    }
+    return '';
   }
 
   private buildUserJson(user: User, groupIds: number[] = []): Record<string, unknown> {
