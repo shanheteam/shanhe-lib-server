@@ -36,8 +36,8 @@ export class OauthController {
   @Throttle({ default: { limit: 20, ttl: 60_000 } })
   @Public()
   @Post('login')
-  login(@Body() body: any) {
-    return this.oauthService.login(body);
+  login(@Body() body: any, @Req() req: Request) {
+    return this.oauthService.login(body, req.ip);
   }
 
   /**
@@ -51,7 +51,7 @@ export class OauthController {
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
   ) {
-    const ret: any = await this.oauthService.passwordLogin(body);
+    const ret: any = await this.oauthService.passwordLogin(body, req.ip);
     // Cookie 真源 SSO：把 user-center 的 access_token 写进 .shanhe.co 共享 cookie，
     // 使 user-center 侧（及其他同域子站）能识别该用户已登录。
     if (ret?.uc_access_token) {

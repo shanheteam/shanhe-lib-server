@@ -247,7 +247,7 @@ export class OauthService {
   /**
    * OAuth login: exchange code for token, get user info, create/match local user
    */
-  async login(body: OauthLoginBody): Promise<{
+  async login(body: OauthLoginBody, clientIp?: string): Promise<{
     token?: string;
     user?: Record<string, unknown>;
     oauth?: Record<string, unknown>;
@@ -318,6 +318,7 @@ export class OauthService {
       nickname,
       avatar,
       email,
+      clientIp,
     });
   }
 
@@ -326,7 +327,7 @@ export class OauthService {
    * 请求 user-center token 端点的 password grant，再取用户信息并匹配/创建本地用户。
    * 仅当 custom（user-center）客户端为 confidential 且启用时可用。
    */
-  async passwordLogin(body: PasswordLoginBody): Promise<Record<string, unknown>> {
+  async passwordLogin(body: PasswordLoginBody, clientIp?: string): Promise<Record<string, unknown>> {
     const oauthType = OAUTH_TYPE_CUSTOM;
     const category = OAUTH_TYPE_TO_CATEGORY[oauthType];
     const username = body?.username || '';
@@ -421,6 +422,7 @@ export class OauthService {
       nickname: userInfo.name || userInfo.nickname || '',
       avatar: userInfo.avatar || userInfo.avatar_url || userInfo.picture || '',
       email: userInfo.email || '',
+      clientIp,
     });
     // 把 user-center 的 access_token 一并带出，供 controller 写共享 .shanhe.co cookie（Cookie 真源 SSO）
     return { ...loginResult, uc_access_token: access_token };
@@ -443,6 +445,7 @@ export class OauthService {
       email: string;
       student_id?: string;
       mobile?: string;
+      clientIp?: string;
     },
     opts: { skipEmailBind?: boolean } = {},
   ): Promise<Record<string, unknown>> {
@@ -458,6 +461,7 @@ export class OauthService {
       email,
       student_id,
       mobile,
+      clientIp,
     } = data;
 
     // Check if this OAuth account is already bound
@@ -488,6 +492,7 @@ export class OauthService {
       // Update user login info
       await this.userRepo.update(user.id, {
         login_at: new Date(),
+        last_login_ip: clientIp,
       });
 
       const token = this.auth.createToken(Number(user.id));
@@ -524,6 +529,7 @@ export class OauthService {
         await this.userRepo.update(existingUser.id, {
           login_at: now,
           avatar: avatar || existingUser.avatar,
+          last_login_ip: clientIp,
         });
 
         const token = this.auth.createToken(Number(existingUser.id));
@@ -550,6 +556,8 @@ export class OauthService {
         mobile: mobile || '',
         realname: nickname,
         login_at: now,
+        last_login_ip: clientIp,
+        register_ip: clientIp,
         created_at: now,
         updated_at: now,
       }),
@@ -1056,6 +1064,7 @@ export class OauthService {
           email: bindEmail,
           student_id,
           mobile: phone,
+          clientIp: req.ip,
         }, { skipEmailBind: true });
         return { valid: true, token: bound.token, user: bound.user };
       } catch (e) {
