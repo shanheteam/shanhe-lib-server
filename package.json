@@ -4,10 +4,9 @@
   "description": "魔豆文库后端：NestJS + TypeScript + TypeORM + MySQL8",
   "private": true,
   "scripts": {
-    "build": "nest build",
-    "start": "nest start",
-    "start:dev": "nest start --watch",
-    "start:prod": "node dist/main.js",
+    "start": "ts-node -r tsconfig-paths/register src/main.ts",
+    "start:dev": "ts-node -r tsconfig-paths/register --transpile-only src/main.ts",
+    "start:watch": "tsx watch src/main.ts",
     "sync:db": "ts-node -r tsconfig-paths/register src/scripts/sync-db.ts",
     "lint": "eslint \"{src,test}/**/*.ts\" --fix"
   },
@@ -47,6 +46,7 @@
     "eslint": "^8.57.0",
     "ts-node": "^10.9.2",
     "tsconfig-paths": "^4.2.0",
+    "tsx": "^4.23.15",
     "typescript": "^5.6.2"
   }
 }
