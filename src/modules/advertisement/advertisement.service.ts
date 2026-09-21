@@ -2,22 +2,25 @@ import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, LessThanOrEqual, MoreThanOrEqual, Repository } from 'typeorm';
 import { Advertisement } from '../../entities';
+import { BaseCrudService } from '../../common/base-crud.service';
 import { Biz } from '../../common/biz.exception';
 import {
-  defined,
   normalizePageSize,
   orLike,
   toBoolArray,
-  toInt,
   toStringValue,
 } from '../../common/query.util';
 
 @Injectable()
-export class AdvertisementService {
+export class AdvertisementService extends BaseCrudService<Advertisement> {
+  protected readonly label = '广告';
+
   constructor(
     @InjectRepository(Advertisement)
-    private readonly repo: Repository<Advertisement>,
-  ) {}
+    repo: Repository<Advertisement>,
+  ) {
+    super(repo);
+  }
 
   async create(data: any, userId: number): Promise<Advertisement> {
     if (!data.position || !data.content) {
@@ -36,26 +39,6 @@ export class AdvertisementService {
       updated_at: new Date(),
     });
     return this.repo.save(entity);
-  }
-
-  async update(data: any): Promise<void> {
-    const id = toInt(data.id, 0);
-    if (id <= 0) throw Biz.invalidArgument('广告id不能为空');
-    const partial = defined(data, ['id']);
-    const res = await this.repo.update(id, { ...partial, updated_at: new Date() });
-    if (!res.affected) throw Biz.notFound('广告不存在');
-  }
-
-  async remove(ids: number[]): Promise<void> {
-    if (!ids.length) throw Biz.invalidArgument('广告id不能为空');
-    await this.repo.delete(ids);
-  }
-
-  async get(id: number): Promise<Advertisement> {
-    if (id <= 0) throw Biz.invalidArgument('广告id不能为空');
-    const ad = await this.repo.findOne({ where: { id } });
-    if (!ad) throw Biz.notFound('广告不存在');
-    return ad;
   }
 
   async getByPosition(positions: string[]): Promise<{ total: number; advertisement: Advertisement[] }> {

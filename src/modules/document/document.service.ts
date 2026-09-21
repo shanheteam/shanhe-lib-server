@@ -1,6 +1,6 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, Repository, In, MoreThanOrEqual, IsNull } from 'typeorm';
+import { DataSource, Repository, EntityManager, In, MoreThanOrEqual, IsNull } from 'typeorm';
 import { JwtService } from '@nestjs/jwt';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -163,6 +163,36 @@ export class DocumentService implements OnModuleInit {
   private extsOf(extType?: string): string[] {
     if (!extType) return [];
     return DOCUMENT_EXT_MAP[extType.trim().toLowerCase()] || [];
+  }
+
+  // 覆盖式同步单个文档与分类的多对多关联：扣除旧分类计数并删除旧关联，
+  // 再插入新关联并累计新分类计数。事务由调用方开启，需传入管理器对象。
+  private async syncDocumentCategories(
+    em: EntityManager,
+    documentId: number,
+    categoryIds: number[],
+  ): Promise<void> {
+    const oldCates = await em.find(DocumentCategory, { where: { document_id: documentId } });
+    const oldIds = oldCates.map((c) => Number(c.category_id));
+    if (oldIds.length > 0) {
+      await em
+        .createQueryBuilder()
+        .update(Category)
+        .set({ doc_count: () => `doc_count - 1` })
+        .where('id IN (:...ids)', { ids: oldIds })
+        .execute();
+      await em.delete(DocumentCategory, { document_id: documentId });
+    }
+    if (categoryIds.length > 0) {
+      const docCates = categoryIds.map((cid) => ({ document_id: documentId, category_id: cid }));
+      await em.save(DocumentCategory, docCates);
+      await em
+        .createQueryBuilder()
+        .update(Category)
+        .set({ doc_count: () => `doc_count + 1` })
+        .where('id IN (:...ids)', { ids: categoryIds })
+        .execute();
+    }
   }
 
   // ================== 文档查询 ==================
@@ -510,27 +540,7 @@ export class DocumentService implements OnModuleInit {
     await queryRunner.connect();
     await queryRunner.startTransaction();
     try {
-      const oldCates = await queryRunner.manager.find(DocumentCategory, { where: { document_id: id } });
-      const oldIds = oldCates.map((c) => Number(c.category_id));
-      if (oldIds.length > 0) {
-        await queryRunner.manager
-          .createQueryBuilder()
-          .update(Category)
-          .set({ doc_count: () => `doc_count - 1` })
-          .where('id IN (:...ids)', { ids: oldIds })
-          .execute();
-        await queryRunner.manager.delete(DocumentCategory, { document_id: id });
-      }
-      if (categoryIds.length > 0) {
-        const docCates = categoryIds.map((cid) => ({ document_id: id, category_id: cid }));
-        await queryRunner.manager.save(DocumentCategory, docCates);
-        await queryRunner.manager
-          .createQueryBuilder()
-          .update(Category)
-          .set({ doc_count: () => `doc_count + 1` })
-          .where('id IN (:...ids)', { ids: categoryIds })
-          .execute();
-      }
+      await this.syncDocumentCategories(queryRunner.manager, id, categoryIds);
       await queryRunner.manager.update(Document, id, fields);
       await queryRunner.commitTransaction();
     } catch (e) {
@@ -1150,25 +1160,7 @@ export class DocumentService implements OnModuleInit {
     await queryRunner.startTransaction();
     try {
       for (const id of documentIds) {
-        const oldCates = await queryRunner.manager.find(DocumentCategory, { where: { document_id: id } });
-        const oldIds = oldCates.map((c) => Number(c.category_id));
-        if (oldIds.length > 0) {
-          await queryRunner.manager
-            .createQueryBuilder()
-            .update(Category)
-            .set({ doc_count: () => `doc_count - 1` })
-            .where('id IN (:...ids)', { ids: oldIds })
-            .execute();
-        }
-        await queryRunner.manager.delete(DocumentCategory, { document_id: id });
-        const docCates = categoryIds.map((cid) => ({ document_id: id, category_id: cid }));
-        await queryRunner.manager.save(DocumentCategory, docCates);
-        await queryRunner.manager
-          .createQueryBuilder()
-          .update(Category)
-          .set({ doc_count: () => `doc_count + 1` })
-          .where('id IN (:...ids)', { ids: categoryIds })
-          .execute();
+        await this.syncDocumentCategories(queryRunner.manager, id, categoryIds);
       }
       await queryRunner.commitTransaction();
     } catch (e) {

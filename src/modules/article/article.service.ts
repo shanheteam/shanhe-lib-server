@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { createHash, randomBytes } from 'crypto';
 import { v1 as uuidv1 } from 'uuid';
-import { In, IsNull, Not, Repository } from 'typeorm';
+import { In, IsNull, Not, EntityManager, Repository } from 'typeorm';
 import {
   Article,
   ArticleCategory,
@@ -164,6 +164,35 @@ export class ArticleService {
     return this.articleToReply(article, categoryIds);
   }
 
+  // 覆盖式同步单篇文章的分类多对多关联：扣除旧分类计数并删除旧关联，
+  // 再插入新关联并累计新分类计数。事务由调用方开启，需传入管理器对象。
+  private async syncArticleCategories(
+    manager: EntityManager,
+    articleId: number,
+    categoryIds: number[],
+  ): Promise<void> {
+    const old = await manager.find(ArticleCategory, { where: { article_id: articleId } });
+    const oldIds = old.map((o) => o.category_id).filter((cid) => cid > 0);
+    if (oldIds.length) {
+      await manager.increment(Category, { id: In(oldIds) }, 'doc_count', -1);
+    }
+    await manager.delete(ArticleCategory, { article_id: articleId });
+
+    if (categoryIds.length) {
+      await manager.increment(Category, { id: In(categoryIds) }, 'doc_count', 1);
+      const now = new Date();
+      const rows = categoryIds.map((cid) =>
+        manager.create(ArticleCategory, {
+          article_id: articleId,
+          category_id: cid,
+          created_at: now,
+          updated_at: now,
+        }),
+      );
+      await manager.save(rows);
+    }
+  }
+
   async update(
     input: Record<string, any>,
     user: JwtUser,
@@ -202,25 +231,7 @@ export class ArticleService {
 
     const now = new Date();
     await this.articleRepo.manager.transaction(async (manager) => {
-      const old = await manager.find(ArticleCategory, { where: { article_id: id } });
-      const oldIds = old.map((o) => o.category_id).filter((cid) => cid > 0);
-      if (oldIds.length) {
-        await manager.increment(Category, { id: In(oldIds) }, 'doc_count', -1);
-      }
-      await manager.delete(ArticleCategory, { article_id: id });
-
-      if (categoryIds.length) {
-        await manager.increment(Category, { id: In(categoryIds) }, 'doc_count', 1);
-        const rows = categoryIds.map((cid) =>
-          manager.create(ArticleCategory, {
-            article_id: id,
-            category_id: cid,
-            created_at: now,
-            updated_at: now,
-          }),
-        );
-        await manager.save(rows);
-      }
+      await this.syncArticleCategories(manager, id, categoryIds);
 
       await manager.update(Article, { id }, {
         title,
@@ -406,27 +417,7 @@ export class ArticleService {
 
     await this.articleRepo.manager.transaction(async (manager) => {
       for (const id of aidList) {
-        const old = await manager.find(ArticleCategory, { where: { article_id: id } });
-        for (const o of old) {
-          if (o.category_id > 0) {
-            await manager.increment(Category, { id: o.category_id }, 'doc_count', -1);
-          }
-        }
-        await manager.delete(ArticleCategory, { article_id: id });
-
-        if (cidList.length) {
-          const now = new Date();
-          const rows = cidList.map((cid) =>
-            manager.create(ArticleCategory, {
-              article_id: id,
-              category_id: cid,
-              created_at: now,
-              updated_at: now,
-            }),
-          );
-          await manager.save(rows);
-          await manager.increment(Category, { id: In(cidList) }, 'doc_count', 1);
-        }
+        await this.syncArticleCategories(manager, id, cidList);
       }
     });
 

@@ -2,23 +2,25 @@ import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
 import { Language } from '../../entities';
+import { BaseCrudService } from '../../common/base-crud.service';
 import { Biz } from '../../common/biz.exception';
 import {
-  defined,
   normalizePageSize,
   orLike,
   toBoolArray,
-  toInt,
-  toNumberArray,
   toStringValue,
 } from '../../common/query.util';
 
 @Injectable()
-export class LanguageService {
+export class LanguageService extends BaseCrudService<Language> {
+  protected readonly label = '语言';
+
   constructor(
     @InjectRepository(Language)
-    private readonly repo: Repository<Language>,
-  ) {}
+    repo: Repository<Language>,
+  ) {
+    super(repo);
+  }
 
   async create(data: any): Promise<void> {
     if (data.code) {
@@ -37,22 +39,9 @@ export class LanguageService {
     await this.repo.save(entity);
   }
 
-  async update(data: any): Promise<void> {
-    const id = toInt(data.id, 0);
-    if (id <= 0) throw Biz.invalidArgument('语言ID不能为空');
-    const partial = defined(data, ['id']);
-    const res = await this.repo.update(id, { ...partial, updated_at: new Date() });
-    if (!res.affected) throw Biz.notFound('语言不存在');
-  }
-
   async updateStatus(ids: number[], enable: boolean): Promise<void> {
     if (!ids.length) throw Biz.invalidArgument('语言ID不能为空');
     await this.repo.update(ids, { enable, updated_at: new Date() });
-  }
-
-  async remove(ids: number[]): Promise<void> {
-    if (!ids.length) throw Biz.invalidArgument('语言ID不能为空');
-    await this.repo.delete(ids);
   }
 
   async list(query: any): Promise<{ total: number; language: Language[] }> {

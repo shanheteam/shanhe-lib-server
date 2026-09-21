@@ -2,22 +2,23 @@ import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Navigation } from '../../entities';
-import { Biz } from '../../common/biz.exception';
+import { BaseCrudService } from '../../common/base-crud.service';
 import {
-  defined,
   normalizePageSize,
   orLike,
-  toInt,
-  toNumberArray,
   toStringValue,
 } from '../../common/query.util';
 
 @Injectable()
-export class NavigationService {
+export class NavigationService extends BaseCrudService<Navigation> {
+  protected readonly label = '导航';
+
   constructor(
     @InjectRepository(Navigation)
-    private readonly repo: Repository<Navigation>,
-  ) {}
+    repo: Repository<Navigation>,
+  ) {
+    super(repo);
+  }
 
   async create(data: any): Promise<Navigation> {
     const entity = this.repo.create({
@@ -34,26 +35,6 @@ export class NavigationService {
       updated_at: new Date(),
     });
     return this.repo.save(entity);
-  }
-
-  async update(data: any): Promise<void> {
-    const id = toInt(data.id, 0);
-    if (id <= 0) throw Biz.invalidArgument('参数不正确');
-    const partial = defined(data, ['id']);
-    const res = await this.repo.update(id, { ...partial, updated_at: new Date() });
-    if (!res.affected) throw Biz.notFound('导航不存在');
-  }
-
-  async remove(ids: number[]): Promise<void> {
-    if (!ids.length) throw Biz.invalidArgument('导航ID不能为空');
-    await this.repo.delete(ids);
-  }
-
-  async get(id: number): Promise<Navigation> {
-    if (id <= 0) throw Biz.invalidArgument('参数不正确');
-    const item = await this.repo.findOne({ where: { id } });
-    if (!item) throw Biz.notFound('导航不存在');
-    return item;
   }
 
   async list(query: any): Promise<{ total: number; navigation: Navigation[] }> {

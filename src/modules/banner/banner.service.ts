@@ -2,23 +2,25 @@ import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
 import { Banner } from '../../entities';
-import { Biz } from '../../common/biz.exception';
+import { BaseCrudService } from '../../common/base-crud.service';
 import {
-  defined,
   normalizePageSize,
   orLike,
   toBoolArray,
-  toInt,
   toNumberArray,
   toStringValue,
 } from '../../common/query.util';
 
 @Injectable()
-export class BannerService {
+export class BannerService extends BaseCrudService<Banner> {
+  protected readonly label = '轮播图';
+
   constructor(
     @InjectRepository(Banner)
-    private readonly repo: Repository<Banner>,
-  ) {}
+    repo: Repository<Banner>,
+  ) {
+    super(repo);
+  }
 
   async create(data: any): Promise<Banner> {
     const entity = this.repo.create({
@@ -33,26 +35,6 @@ export class BannerService {
       updated_at: new Date(),
     });
     return this.repo.save(entity);
-  }
-
-  async update(data: any): Promise<void> {
-    const id = toInt(data.id, 0);
-    if (id <= 0) throw Biz.invalidArgument('参数不正确');
-    const partial = defined(data, ['id']);
-    const res = await this.repo.update(id, { ...partial, updated_at: new Date() });
-    if (!res.affected) throw Biz.notFound('轮播图不存在');
-  }
-
-  async remove(ids: number[]): Promise<void> {
-    if (!ids.length) throw Biz.invalidArgument('轮播图ID不能为空');
-    await this.repo.delete(ids);
-  }
-
-  async get(id: number): Promise<Banner> {
-    if (id <= 0) throw Biz.invalidArgument('参数不正确');
-    const banner = await this.repo.findOne({ where: { id } });
-    if (!banner) throw Biz.notFound('轮播图不存在');
-    return banner;
   }
 
   async list(query: any): Promise<{ total: number; banner: Banner[] }> {
