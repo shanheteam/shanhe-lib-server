@@ -226,12 +226,14 @@ export class OssService {
     const region = this.region().replace(/^https?:\/\//, '').replace(/\.aliyuncs\.com$/, '');
     const host = `https://${this.bucket()}.${region}.aliyuncs.com`;
     const expiration = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+    // Content-Type 只按主类型做 starts-with 匹配：部分 MIME（如 application/epub+zip 的 '+'）
+    // 在 POST 表单链路中可能被改写，精确匹配（eq）会导致 OSS 返回 403 PolicyConditionsNotSatisfied。
     const signed = this.client().calculatePostSignature({
       expiration,
       conditions: [
         ['content-length-range', options.size, options.size],
         { key: options.key },
-        ['eq', '$Content-Type', options.contentType],
+        ['starts-with', '$Content-Type', `${options.contentType.split('/')[0]}/`],
         { success_action_status: '200' },
       ],
     });
