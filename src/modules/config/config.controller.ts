@@ -479,6 +479,8 @@ export class ConfigController {
       const urls = documents.map((doc) => ({
         loc: `${domain}/document/${doc.uuid}`,
         lastmod: doc.updated_at ? doc.updated_at.toISOString() : now,
+        changefreq: 'weekly',
+        priority: '0.7',
       }));
       await this.putSitemapFile(file, this.buildSitemapXml(urls));
       indexes.push({ loc: `${sitemapBase}/documents-${page}.xml`, lastmod: now });
@@ -501,11 +503,36 @@ export class ConfigController {
       const urls = articles.map((article) => ({
         loc: `${domain}/article/${article.identifier}`,
         lastmod: article.updated_at ? article.updated_at.toISOString() : now,
+        changefreq: 'weekly',
+        priority: '0.7',
       }));
       await this.putSitemapFile(file, this.buildSitemapXml(urls));
       indexes.push({ loc: `${sitemapBase}/articles-${page}.xml`, lastmod: now });
       page++;
     }
+
+    // 静态页面 sitemap：首页（最高权重）+ 已启用的分类
+    const now = new Date().toISOString();
+    const categories = await this.categoryRepo.find({
+      where: { enable: true },
+      select: ['id', 'updated_at'],
+    });
+    const pageUrls: Array<{
+      loc: string;
+      lastmod: string;
+      changefreq?: string;
+      priority?: string;
+    }> = [
+      { loc: `${domain}/`, lastmod: now, changefreq: 'daily', priority: '1.0' },
+      ...categories.map((c) => ({
+        loc: `${domain}/category/${c.id}`,
+        lastmod: c.updated_at ? c.updated_at.toISOString() : now,
+        changefreq: 'daily',
+        priority: '0.8',
+      })),
+    ];
+    await this.putSitemapFile('sitemap/pages.xml', this.buildSitemapXml(pageUrls));
+    indexes.push({ loc: `${sitemapBase}/pages.xml`, lastmod: now });
 
     if (indexes.length > 0) {
       await this.putSitemapFile('sitemap/sitemap.xml', this.buildSitemapIndexXml(indexes));
@@ -841,7 +868,12 @@ export class ConfigController {
   }
 
   private buildSitemapXml(
-    urls: Array<{ loc: string; lastmod: string }>,
+    urls: Array<{
+      loc: string;
+      lastmod: string;
+      changefreq?: string;
+      priority?: string;
+    }>,
   ): string {
     const lines = [
       '<?xml version="1.0" encoding="UTF-8"?>',
@@ -852,8 +884,8 @@ export class ConfigController {
         '  <url>',
         `    <loc>${this.escapeXml(url.loc)}</loc>`,
         `    <lastmod>${this.escapeXml(url.lastmod)}</lastmod>`,
-        '    <changefreq>daily</changefreq>',
-        '    <priority>1.0</priority>',
+        `    <changefreq>${url.changefreq || 'daily'}</changefreq>`,
+        `    <priority>${url.priority || '1.0'}</priority>`,
         '  </url>',
       );
     }
