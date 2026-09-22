@@ -985,7 +985,17 @@ export class OauthService {
    */
   async ssoSession(req: Request): Promise<Record<string, unknown>> {
     let token = this.readCookie(req, 'access_token');
-    if (!token) return { valid: false, reason: 'no-cookie' };
+    if (!token) {
+      // 共享 access_token cookie 缺失：无法仅凭"缺 cookie"判断是 user-center 确证登出
+      // 还是共享 cookie 未落地/被跨域转发拦截。向 user-center /auth/session-state 做正向确认：
+      // - has_session=true（登录仍有效）→ 判为 cookie 未落地，保留本地会话（防"登录即退/切标签即退"）；
+      // - has_session=false（确证登出）→ valid:false 硬登出，恢复 user 登出 → lib 立即登出；
+      // - 不可达/异常 → 返回 degraded，交前端按降级窗口处置，不误踢。
+      const ucAlive = await this.probeUcSessionState(req);
+      if (ucAlive === true) return { valid: true, degraded: true };
+      if (ucAlive === false) return { valid: false, reason: 'no-cookie' };
+      return { valid: true, degraded: true };
+    }
 
     // 实时校验 + 自动续期：access_token 过期（签名有效）时，用父域 refresh_token 经
     // user-center /oauth/token 的 refresh_token grant 静默换新令牌，保证全站长在线。
@@ -1194,6 +1204,33 @@ export class OauthService {
       refresh_token: String(data.refresh_token || ''),
       reachable: true,
     };
+  }
+
+  /**
+   * 向 user-center /auth/session-state 正向确认是否存在有效会话（OAuth/SSO 跨站 SLO）。
+   * 把浏览器携带的共享 cookie（refresh_token 等，均在 .shanhe.co 域内）原样转发给 user-center，
+   * 由其判定该身份是否仍在线。返回：
+   * - true  ：user-center 有会话（has_session=true）→ 本地应保留；
+   * - false ：user-center 确证无会话（has_session=false）→ 本地应登出；
+   * - null  ：user-center 不可达 / 响应异常 → 无法确证，调用方应按不可达处理。
+   */
+  private async probeUcSessionState(req: Request): Promise<boolean | null> {
+    try {
+      const ucBase = this.ucBase();
+      const sessionStateUrl = `${ucBase.replace(/\/$/, '')}/auth/session-state`;
+      const cookie = String(req.headers['cookie'] || '');
+      const res = await fetch(sessionStateUrl, {
+        headers: cookie ? { cookie } : {},
+        signal: AbortSignal.timeout(6000),
+      });
+      if (!res || !res.ok) return null;
+      const data: any = await res.json().catch(() => null);
+      if (!data || typeof data.has_session !== 'boolean') return null;
+      return data.has_session;
+    } catch {
+      // 不可达/超时：无法确证，交调用方按降级处理
+      return null;
+    }
   }
 
   /** 用户是否活跃：uc userinfo 的 status；为空(兼容未返回)视为活跃，'active' 活跃，其余(disabled/banned)拒绝 */
