@@ -52,11 +52,15 @@ export class OauthController {
     @Res({ passthrough: true }) res: Response,
   ) {
     const ret: any = await this.oauthService.passwordLogin(body, req.ip);
-    // Cookie 真源 SSO：把 user-center 的 access_token 写进 .shanhe.co 共享 cookie，
-    // 使 user-center 侧（及其他同域子站）能识别该用户已登录。
+    // Cookie 真源 SSO：把 user-center 的 access_token 与 refresh_token 写进 .shanhe.co 共享 cookie，
+    // 使 user-center 侧（及其他同域子站）能识别该用户已登录，并借同一父域 refresh_token 长期续期。
     if (ret?.uc_access_token) {
       this.setSharedAccessTokenCookie(req, res, String(ret.uc_access_token));
       delete ret.uc_access_token; // 不把 user-center token 泄露给前端
+    }
+    if (ret?.uc_refresh_token) {
+      this.setSharedRefreshTokenCookie(req, res, String(ret.uc_refresh_token));
+      delete ret.uc_refresh_token;
     }
     return ret;
   }
@@ -83,21 +87,42 @@ export class OauthController {
   /**
    * 静默建立 lib 会话：浏览器带着 .shanhe.co 共享 access_token cookie 时，
    * 校验 user-center 身份并经 UserOauth 绑定签发 lib token（user-center 登录 → lib 自动登录）。
+   * 若 access_token 已过期，后端会经 user-center 静默续期并把新令牌回写共享父域 cookie（全站长在线）。
    */
   @Public()
   @Post('sso')
-  sso(@Req() req: Request) {
-    return this.oauthService.ssoSession(req);
+  async sso(@Req() req: Request, @Res({ passthrough: true }) res: Response) {
+    const ret: any = await this.oauthService.ssoSession(req);
+    this.writeSharedRefreshCookies(req, res, ret);
+    return ret;
   }
 
   /**
-   * SSO 会话探测：用于 user-center 登出后 lib 后台静默退出（探测共享 cookie 是否仍有效）。
+   * SSO 会话探测：用于 user-center 登出后 lib 后台静默退出（探测共享 cookie 是否仍有效），
+   * 同时承载 access_token 续期后把新令牌回写共享父域 cookie 的职责。
    */
   @Public()
   @Get('sso/session')
   @Header('Cache-Control', 'no-store')
-  ssoSessionProbe(@Req() req: Request) {
-    return this.oauthService.ssoSession(req);
+  async ssoSessionProbe(@Req() req: Request, @Res({ passthrough: true }) res: Response) {
+    const ret: any = await this.oauthService.ssoSession(req);
+    this.writeSharedRefreshCookies(req, res, ret);
+    return ret;
+  }
+
+  /**
+   * 续期结果回写父域 cookie：仅当后端做了静默续期（ssoSession 返回 refresh）时，
+   * 把新 access_token 与新 refresh_token（轮换后）落到 .shanhe.co。
+   * 原始令牌只用于写 cookie，绝不返回给前端（delete ret.refresh）。
+   */
+  private writeSharedRefreshCookies(req: Request, res: Response, ret: any): void {
+    const refresh = ret?.refresh;
+    if (!refresh?.access_token) return;
+    this.setSharedAccessTokenCookie(req, res, String(refresh.access_token));
+    if (refresh.refresh_token) {
+      this.setSharedRefreshTokenCookie(req, res, String(refresh.refresh_token));
+    }
+    delete ret.refresh;
   }
 
   /**
@@ -114,10 +139,11 @@ export class OauthController {
     let domain = '';
     if (/\.co$/.test(host) && parts.length >= 3) domain = '.' + parts.slice(-2).join('.');
     const secure = isProd ? '; Secure' : '';
-    res.setHeader(
-      'Set-Cookie',
-      `access_token=; Path=/; HttpOnly; SameSite=Lax${domain ? `; Domain=${domain}` : ''}${secure}; Max-Age=0`,
-    );
+    const domainAttr = domain ? `; Domain=${domain}` : '';
+    res.setHeader('Set-Cookie', [
+      `access_token=; Path=/; HttpOnly; SameSite=Lax${domainAttr}${secure}; Max-Age=0`,
+      `refresh_token=; Path=/; HttpOnly; SameSite=Lax${domainAttr}${secure}; Max-Age=0`,
+    ]);
     return { ok: true };
   }
 
@@ -133,6 +159,20 @@ export class OauthController {
     res.setHeader(
       'Set-Cookie',
       `access_token=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax${domain ? `; Domain=${domain}` : ''}${secure}; Max-Age=3600`,
+    );
+  }
+
+  /** 写 user-center 共享 refresh_token cookie 的工具：轮换后把新 refresh_token 也落到 .shanhe.co。 */
+  private setSharedRefreshTokenCookie(req: Request, res: Response, token: string): void {
+    const isProd = process.env.NODE_ENV === 'production';
+    const host = (req.hostname || '').toLowerCase();
+    const parts = host.split('.');
+    let domain = '';
+    if (/\.co$/.test(host) && parts.length >= 3) domain = '.' + parts.slice(-2).join('.');
+    const secure = isProd ? '; Secure' : '';
+    res.setHeader(
+      'Set-Cookie',
+      `refresh_token=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax${domain ? `; Domain=${domain}` : ''}${secure}; Max-Age=${30 * 24 * 60 * 60}`,
     );
   }
 

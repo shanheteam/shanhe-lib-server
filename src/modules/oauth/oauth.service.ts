@@ -425,7 +425,7 @@ export class OauthService {
       clientIp,
     });
     // 把 user-center 的 access_token 一并带出，供 controller 写共享 .shanhe.co cookie（Cookie 真源 SSO）
-    return { ...loginResult, uc_access_token: access_token };
+    return { ...loginResult, uc_access_token: access_token, uc_refresh_token: refresh_token };
   }
 
   /**
@@ -984,35 +984,50 @@ export class OauthService {
    * 定位 lib 本地用户 → 签发 lib token。无 cookie / 校验失败 / 未绑定 → 静默返回 { valid:false }，不建账号。
    */
   async ssoSession(req: Request): Promise<Record<string, unknown>> {
-    const token = this.readCookie(req, 'access_token');
+    let token = this.readCookie(req, 'access_token');
     if (!token) return { valid: false, reason: 'no-cookie' };
 
-    let kid: string | undefined;
-    try {
-      const header = token.split('.')[0];
-      if (header) {
-        const parsed = JSON.parse(Buffer.from(header, 'base64url').toString('utf8'));
-        kid = parsed?.kid;
+    // 实时校验 + 自动续期：access_token 过期（签名有效）时，用父域 refresh_token 经
+    // user-center /oauth/token 的 refresh_token grant 静默换新令牌，保证全站长在线。
+    // 仅"签名有效但过期"才可安全续期；签名被篡改 / 无 refresh_token 一律拒绝。
+    // user-center 不可达（网络失败 / JWKS 拉不到）时返回 degraded，交前端按 15 分钟降级窗口处置。
+    let degraded = false;
+    let refreshedTokens: { access_token: string; refresh_token: string } | null = null;
+
+    let verify = await this.verifyUcToken(token);
+    if (!verify.ok) {
+      if (verify.unreachable) {
+        degraded = true;
+      } else if (verify.expired) {
+        const rt = this.readCookie(req, 'refresh_token');
+        if (rt) {
+          const refresh = await this.tryRefreshUc(rt);
+          if (refresh && refresh.reachable) {
+            refreshedTokens = {
+              access_token: refresh.access_token,
+              refresh_token: refresh.refresh_token || '',
+            };
+            token = refresh.access_token;
+            verify = await this.verifyUcToken(token);
+            if (!verify.ok) return { valid: false, reason: 'invalid-token' };
+          } else if (refresh && refresh.reachable === false) {
+            degraded = true;
+          } else {
+            // user-center 可达但 refresh 被拒（轮换令牌已失效/被吊销）→ 会话确证失效
+            return { valid: false, reason: 'no-refresh' };
+          }
+        } else {
+          return { valid: false, reason: 'no-refresh' };
+        }
+      } else {
+        return { valid: false, reason: 'invalid-token' };
       }
-    } catch {
-      /* ignore */
     }
 
-    const publicKey = await this.jwks.getPublicKey(kid);
-    if (!publicKey) return { valid: false, reason: 'no-jwks' };
-
-    let payload: any;
-    try {
-      payload = this.jwtService.verify(token, {
-        publicKey,
-        algorithms: ['RS256'],
-        ignoreExpiration: false,
-        issuer: 'shanhe-auth',
-        audience: 'shanhe-users',
-      });
-    } catch {
-      return { valid: false, reason: 'invalid-token' };
-    }
+    const payload = verify.payload;
+    if (!payload) return { valid: false, reason: 'no-sub' };
+    // user-center 不可达：无法确证会话，交前端按 15 分钟降级窗口决定是否保留本地会话
+    if (degraded) return { valid: true, degraded: true };
 
     const ucSubject = String(payload?.sub || payload?.openid || '');
     if (!ucSubject) return { valid: false, reason: 'no-sub' };
@@ -1066,7 +1081,9 @@ export class OauthService {
           mobile: phone,
           clientIp: req.ip,
         }, { skipEmailBind: true });
-        return { valid: true, token: bound.token, user: bound.user };
+        const newUserRet: any = { valid: true, token: bound.token, user: bound.user };
+        if (refreshedTokens) newUserRet.refresh = refreshedTokens;
+        return newUserRet;
       } catch (e) {
         console.error('[SSO] auto-bind new user failed:', (e as Error)?.message);
         return { valid: false, reason: 'bind-failed' };
@@ -1105,10 +1122,77 @@ export class OauthService {
 
     const token2 = this.auth.createToken(Number(user.id));
     const groupIds = await this.getGroupIds(Number(user.id));
-    return {
+    const ret: any = {
       valid: true,
       token: token2,
       user: this.buildUserJson(user, groupIds),
+    };
+    if (refreshedTokens) ret.refresh = refreshedTokens;
+    return ret;
+  }
+
+  /** 用 user-center JWKS 公钥校验其 access_token，并区分「签名有效但过期」与「IdP 不可达」。 */
+  private async verifyUcToken(
+    token: string,
+  ): Promise<{ ok: boolean; expired?: boolean; unreachable?: boolean; payload?: any }> {
+    let kid: string | undefined;
+    try {
+      kid = JSON.parse(Buffer.from(token.split('.')[0], 'base64url').toString('utf8'))?.kid;
+    } catch {
+      /* ignore */
+    }
+    const publicKey = await this.jwks.getPublicKey(kid);
+    // 拉不到公钥（JWKS 未配置或刷新失败且无缓存）→ 视为 user-center 不可达，交降级窗口
+    if (!publicKey) return { ok: false, unreachable: true };
+    try {
+      const payload = this.jwtService.verify(token, {
+        publicKey,
+        algorithms: ['RS256'],
+        ignoreExpiration: false,
+        issuer: 'shanhe-auth',
+        audience: 'shanhe-users',
+      });
+      return { ok: true, payload };
+    } catch (e: any) {
+      // 仅 TokenExpiredError 表明签名有效但已过期，可安全走 refresh 续期
+      return { ok: false, expired: e?.name === 'TokenExpiredError' };
+    }
+  }
+
+  /** 用父域 refresh_token 经 user-center /oauth/token 换新令牌；网络失败返回 reachable=false。 */
+  private async tryRefreshUc(
+    refreshToken: string,
+  ): Promise<{ access_token: string; refresh_token: string; reachable: boolean } | null> {
+    const category = OAUTH_TYPE_TO_CATEGORY[OAUTH_TYPE_CUSTOM];
+    const client_id = this.config.get(category, 'client_id');
+    const client_secret = this.config.get(category, 'client_secret');
+    const base = this.ucBase();
+    const params = new URLSearchParams({
+      grant_type: 'refresh_token',
+      refresh_token: refreshToken,
+      client_id,
+      client_secret,
+      scope: (this.config.get(category, 'scope') || 'openid profile email').trim(),
+    });
+    let response: Response | undefined;
+    try {
+      response = await fetch(`${base}/oauth/token`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: params.toString(),
+        signal: AbortSignal.timeout(8000),
+      });
+    } catch (e: any) {
+      console.warn('[SSO] uc refresh network fail:', e?.message);
+      return { access_token: '', refresh_token: '', reachable: false };
+    }
+    if (!response || !response.ok) return null; // user-center 可达但 refresh 被拒
+    const data: any = await response.json().catch(() => ({}));
+    if (!data?.access_token) return null;
+    return {
+      access_token: String(data.access_token),
+      refresh_token: String(data.refresh_token || ''),
+      reachable: true,
     };
   }
 

@@ -427,6 +427,8 @@ export const CONFIG_SEED: ConfigSeed[] = [
   ...oauthConfigSeed('oauthGithub', 'GitHub', 'https://github.com/settings/apps/new'),
   ...oauthConfigSeed('oauthGitee', 'Gitee', 'https://gitee.com/oauth/applications'),
   ...oauthConfigSeed('oauthCustom', '自定义Oauth', '', {
+    clientIdLabel: 'Client ID',
+    clientIdPlaceholder: '由统一身份中心(user-center)分配的 client_id（SSO 接入方默认 shanhe_lib_client）',
     extra: [
       { name: 'authorize_url', label: '授权地址', value: '', placeholder: '如 https://example.com/oauth/authorize', input_type: 'text', sort: 90 },
       { name: 'token_url', label: '获取Token地址', value: '', input_type: 'text', sort: 100 },
