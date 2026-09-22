@@ -74,6 +74,9 @@ export class AuthGuard implements CanActivate {
       return true;
     }
 
+    // 默认策略：拒绝优先。未显式声明 @Public() 且不满足任何鉴权装饰器的路由，
+    // 一律要求登录，避免新增 endpoint 漏标而被静默公开。
+    if (!request.user) throw Biz.unauthenticated('您未登录或您的登录已过期，请重新登录或刷新页面重试');
     return true;
   }
 }

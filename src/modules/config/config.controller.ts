@@ -293,6 +293,7 @@ export class ConfigController {
     };
   }
 
+  @Public()
   @Get('release')
   async getLatestRelease() {
     return this.buildReleaseDto();

@@ -10,6 +10,7 @@ import {
   Put,
   Query,
 } from '@nestjs/common';
+import { Public } from '../../common/decorators/public.decorator';
 import { RequireLogin } from '../../common/decorators/require-login.decorator';
 import { RequirePermission } from '../../common/decorators/permission.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
@@ -30,6 +31,7 @@ export class UserController {
     return this.userService.logout(user);
   }
 
+  @Public()
   @Get()
   getUser(@Query('id') id: any, @CurrentUser() user: JwtUser | undefined) {
     return this.userService.getUser(id === undefined ? undefined : Number(id), user);
@@ -73,6 +75,7 @@ export class UserController {
   }
 
   @Throttle({ default: { limit: 30, ttl: 60_000 } })
+  @Public()
   @Get('captcha')
   getUserCaptcha(@Query('type') type: string) {
     return this.userService.getUserCaptcha(type);

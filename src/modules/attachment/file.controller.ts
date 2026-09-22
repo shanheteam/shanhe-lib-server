@@ -1,4 +1,4 @@
-import { Controller, Get, Logger, Param, Query, Res } from '@nestjs/common';
+import { Controller, Get, Ip, Logger, Param, Query, Res } from '@nestjs/common';
 import { SkipThrottle } from '@nestjs/throttler';
 import { Response } from 'express';
 import * as path from 'path';
@@ -106,6 +106,7 @@ export class FileController {
   async download(
     @Param('jwt') jwt: string,
     @Query() query: Record<string, any>,
+    @Ip() ip: string,
     @Res() res: Response,
   ) {
     let claims: { userId: string; hash: string; documentId: string; ip: string };
@@ -117,6 +118,10 @@ export class FileController {
     const userId = String(query.user_id ?? '');
     const documentId = String(query.document_id ?? '');
     if (claims.userId !== userId || claims.documentId !== documentId) {
+      return res.status(400).send('下载链接已失效');
+    }
+    // 下载令牌绑定签发时 IP，转发给他人在其他 IP 上请求时直接失效
+    if (claims.ip && claims.ip !== ip) {
       return res.status(400).send('下载链接已失效');
     }
     const filename = String(query.filename ?? '');
