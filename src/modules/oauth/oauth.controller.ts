@@ -149,7 +149,9 @@ export class OauthController {
     const isProd = process.env.NODE_ENV === 'production';
     const domain = this.sharedCookieDomain(req);
     const secure = isProd ? '; Secure' : '';
-    res.setHeader(
+    // 用 append 而非 setHeader：setHeader('Set-Cookie') 会按名覆盖前面的 cookie，
+    // 导致同响应里先写的 access_token 被后写的 refresh_token 冲掉（access_token 丢失）。
+    res.append(
       'Set-Cookie',
       `access_token=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax${domain ? `; Domain=${domain}` : ''}${secure}; Max-Age=3600`,
     );
@@ -160,7 +162,7 @@ export class OauthController {
     const isProd = process.env.NODE_ENV === 'production';
     const domain = this.sharedCookieDomain(req);
     const secure = isProd ? '; Secure' : '';
-    res.setHeader(
+    res.append(
       'Set-Cookie',
       `refresh_token=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax${domain ? `; Domain=${domain}` : ''}${secure}; Max-Age=${30 * 24 * 60 * 60}`,
     );
