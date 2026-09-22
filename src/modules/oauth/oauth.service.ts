@@ -1012,18 +1012,19 @@ export class OauthService {
         const rt = this.readCookie(req, 'refresh_token');
         if (rt) {
           const refresh = await this.tryRefreshUc(rt);
-          if (refresh && refresh.reachable) {
+          if (refresh && refresh.status === 'ok') {
             refreshedTokens = {
               access_token: refresh.access_token,
-              refresh_token: refresh.refresh_token || '',
+              refresh_token: refresh.refresh_token,
             };
             token = refresh.access_token;
             verify = await this.verifyUcToken(token);
             if (!verify.ok) return { valid: false, reason: 'invalid-token' };
-          } else if (refresh && refresh.reachable === false) {
+          } else if (refresh && refresh.status === 'unreachable') {
+            // 网络失败 / user-center 5xx：无法确证，进入降级窗口，不误踢在线用户
             degraded = true;
           } else {
-            // user-center 可达但 refresh 被拒（轮换令牌已失效/被吊销）→ 会话确证失效
+            // user-center 可达但 refresh 被 4xx 拒绝（轮换令牌已失效/被吊销）→ 会话确证失效
             return { valid: false, reason: 'no-refresh' };
           }
         } else {
@@ -1169,10 +1170,21 @@ export class OauthService {
     }
   }
 
-  /** 用父域 refresh_token 经 user-center /oauth/token 换新令牌；网络失败返回 reachable=false。 */
+  /**
+   * 用父域 refresh_token 经 user-center /oauth/token 换新令牌，返回三态，供调用方区分：
+   * - ok         ：续期成功，返回新 access_token / refresh_token；
+   * - unreachable：网络失败 / 超时 / user-center 5xx（服务重启、网关错误）→ 无法确证，
+   *                 调用方应进入降级窗口而非硬登出，避免 user-center 瞬时故障时全员误登出；
+   * - rejected   ：user-center 可达且返回 4xx 业务拒绝（invalid_grant 等，令牌确证失效）
+   *                 或响应体缺少合法 access_token → 调用方应视为会话失效硬登出。
+   */
   private async tryRefreshUc(
     refreshToken: string,
-  ): Promise<{ access_token: string; refresh_token: string; reachable: boolean } | null> {
+  ): Promise<
+    { status: 'ok'; access_token: string; refresh_token: string }
+    | { status: 'unreachable' }
+    | { status: 'rejected' }
+  > {
     const category = OAUTH_TYPE_TO_CATEGORY[OAUTH_TYPE_CUSTOM];
     const client_id = this.config.get(category, 'client_id');
     const client_secret = this.config.get(category, 'client_secret');
@@ -1194,16 +1206,26 @@ export class OauthService {
       });
     } catch (e: any) {
       console.warn('[SSO] uc refresh network fail:', e?.message);
-      return { access_token: '', refresh_token: '', reachable: false };
+      return { status: 'unreachable' };
     }
-    if (!response || !response.ok) return null; // user-center 可达但 refresh 被拒
+    if (!response) return { status: 'unreachable' };
+    // 5xx 属 user-center 服务端错误（重启/网关/部署），非业务判定，视为不可达走降级，
+    // 与 4xx（确证失效）严格区分：前者不该导致全员硬登出。
+    const status = response.status;
+    if (status >= 500 && status <= 599) {
+      console.warn(`[SSO] uc refresh server error: ${status}`);
+      return { status: 'unreachable' };
+    }
     const data: any = await response.json().catch(() => ({}));
-    if (!data?.access_token) return null;
-    return {
-      access_token: String(data.access_token),
-      refresh_token: String(data.refresh_token || ''),
-      reachable: true,
-    };
+    // 2xx 且拿到合法 access_token → 成功；其余（4xx 拒绝 / 体缺失）→ 确证失效
+    if (status >= 200 && status < 300 && data?.access_token) {
+      return {
+        status: 'ok',
+        access_token: String(data.access_token),
+        refresh_token: String(data.refresh_token || ''),
+      };
+    }
+    return { status: 'rejected' };
   }
 
   /**
