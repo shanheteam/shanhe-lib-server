@@ -11,35 +11,14 @@ import { Biz, BizException } from '../../common/biz.exception';
 import { makePassword, randomString } from '../../common/password.util';
 
 // OAuth type constants (aligned with frontend enum)
-const OAUTH_TYPE_QQ = 1;
-const OAUTH_TYPE_WECHAT = 2;
-const OAUTH_TYPE_GITEE = 3;
-const OAUTH_TYPE_GITHUB = 4;
-const OAUTH_TYPE_WECHAT_MINI = 5;
 const OAUTH_TYPE_CUSTOM = 6;
-const OAUTH_TYPE_GOOGLE = 7;
-const OAUTH_TYPE_OFFICIAL_ACCOUNT = 8;
 
 const OAUTH_TYPE_TO_CATEGORY: Record<number, string> = {
-  [OAUTH_TYPE_QQ]: 'oauthQQ',
-  [OAUTH_TYPE_WECHAT]: 'oauthWechat',
-  [OAUTH_TYPE_GITEE]: 'oauthGitee',
-  [OAUTH_TYPE_GITHUB]: 'oauthGithub',
-  [OAUTH_TYPE_WECHAT_MINI]: 'oauthWechatMini',
   [OAUTH_TYPE_CUSTOM]: 'oauthCustom',
-  [OAUTH_TYPE_GOOGLE]: 'oauthGoogle',
-  [OAUTH_TYPE_OFFICIAL_ACCOUNT]: 'oauthOfficialAccount',
 };
 
 const OAUTH_TYPE_TO_NAME: Record<number, string> = {
-  [OAUTH_TYPE_QQ]: 'QQ',
-  [OAUTH_TYPE_WECHAT]: '微信',
-  [OAUTH_TYPE_GITEE]: '码云',
-  [OAUTH_TYPE_GITHUB]: 'GitHub',
-  [OAUTH_TYPE_WECHAT_MINI]: '微信小程序',
   [OAUTH_TYPE_CUSTOM]: '山河大学学籍',
-  [OAUTH_TYPE_GOOGLE]: '谷歌',
-  [OAUTH_TYPE_OFFICIAL_ACCOUNT]: '公众号',
 };
 
 interface OauthLoginBody {
@@ -767,125 +746,8 @@ export class OauthService {
       };
     }
 
-    // Built-in OAuth providers
-    let token_url = '';
-    let params: URLSearchParams;
-
-    switch (oauthType) {
-      case OAUTH_TYPE_QQ:
-        token_url = 'https://graph.qq.com/oauth2.0/token';
-        params = new URLSearchParams({
-          grant_type: 'authorization_code',
-          code,
-          client_id,
-          client_secret,
-          redirect_uri: redirect_url,
-          fmt: 'json',
-        });
-        break;
-
-      case OAUTH_TYPE_WECHAT:
-      case OAUTH_TYPE_OFFICIAL_ACCOUNT:
-        token_url = 'https://api.weixin.qq.com/sns/oauth2/access_token';
-        params = new URLSearchParams({
-          grant_type: 'authorization_code',
-          code,
-          appid: client_id,
-          secret: client_secret,
-        });
-        break;
-
-      case OAUTH_TYPE_GITEE:
-        token_url = 'https://gitee.com/oauth/token';
-        params = new URLSearchParams({
-          grant_type: 'authorization_code',
-          code,
-          client_id,
-          client_secret,
-          redirect_uri: redirect_url,
-        });
-        break;
-
-      case OAUTH_TYPE_GITHUB:
-        token_url = 'https://github.com/login/oauth/access_token';
-        params = new URLSearchParams({
-          client_id,
-          client_secret,
-          code,
-          redirect_uri: redirect_url,
-        });
-        break;
-
-      case OAUTH_TYPE_GOOGLE:
-        token_url = 'https://oauth2.googleapis.com/token';
-        params = new URLSearchParams({
-          grant_type: 'authorization_code',
-          code,
-          client_id,
-          client_secret,
-          redirect_uri: redirect_url,
-        });
-        break;
-
-      default:
-        throw Biz.invalidArgument('不支持的OAuth类型');
-    }
-
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/x-www-form-urlencoded',
-    };
-    if (oauthType === OAUTH_TYPE_GITHUB) {
-      headers['Accept'] = 'application/json';
-    }
-
-    const response = await fetch(token_url, {
-      method: 'POST',
-      headers,
-      body: params.toString(),
-    });
-
-    if (!response.ok) {
-      throw Biz.internal(`获取token失败: ${response.status}`);
-    }
-
-    let data: any;
-    const contentType = response.headers.get('content-type') || '';
-    if (contentType.includes('application/json')) {
-      data = await response.json();
-    } else {
-      const text = await response.text();
-      const searchParams = new URLSearchParams(text);
-      data = Object.fromEntries(searchParams.entries());
-    }
-
-    const access_token = data.access_token || '';
-
-    // For QQ, need extra step to get openid
-    let openid = data.openid || data.sub || data.id || '';
-    if (oauthType === OAUTH_TYPE_QQ && access_token) {
-      openid = await this.getQQOpenid(access_token);
-    }
-
-    return {
-      access_token,
-      refresh_token: data.refresh_token || '',
-      scope: data.scope || '',
-      openid,
-    };
-  }
-
-  /**
-   * Get QQ openid from access token
-   */
-  private async getQQOpenid(access_token: string): Promise<string> {
-    const response = await fetch(
-      `https://graph.qq.com/oauth2.0/me?access_token=${access_token}&fmt=json`,
-    );
-    if (!response.ok) {
-      throw Biz.internal('获取QQ openid失败');
-    }
-    const data = await response.json();
-    return data.openid || '';
+    // 仅支持自定义 OAuth（SSO 接入 user-center）
+    throw Biz.invalidArgument('不支持的OAuth类型');
   }
 
   /**
@@ -932,45 +794,8 @@ export class OauthService {
       return await response.json();
     }
 
-    // Built-in providers
-    let userinfo_url = '';
-    let headers: Record<string, string> = {};
-
-    switch (oauthType) {
-      case OAUTH_TYPE_QQ:
-        userinfo_url = `https://graph.qq.com/user/get_user_info?access_token=${access_token}&oauth_consumer_key=${this.config.get(category, 'client_id')}&openid=${openid}`;
-        break;
-
-      case OAUTH_TYPE_WECHAT:
-      case OAUTH_TYPE_OFFICIAL_ACCOUNT:
-        userinfo_url = `https://api.weixin.qq.com/sns/userinfo?access_token=${access_token}&openid=${openid}`;
-        break;
-
-      case OAUTH_TYPE_GITEE:
-        userinfo_url = 'https://gitee.com/api/v5/user';
-        headers = { Authorization: `Bearer ${access_token}` };
-        break;
-
-      case OAUTH_TYPE_GITHUB:
-        userinfo_url = 'https://api.github.com/user';
-        headers = { Authorization: `Bearer ${access_token}` };
-        break;
-
-      case OAUTH_TYPE_GOOGLE:
-        userinfo_url = 'https://www.googleapis.com/oauth2/v2/userinfo';
-        headers = { Authorization: `Bearer ${access_token}` };
-        break;
-
-      default:
-        throw Biz.invalidArgument('不支持的OAuth类型');
-    }
-
-    const response = await fetch(userinfo_url, { headers });
-    if (!response.ok) {
-      throw Biz.internal(`获取用户信息失败: ${response.status}`);
-    }
-
-    return await response.json();
+    // 仅支持自定义 OAuth（SSO 接入 user-center）
+    throw Biz.invalidArgument('不支持的OAuth类型');
   }
 
   private async getGroupIds(userId: number): Promise<number[]> {

@@ -410,22 +410,7 @@ export const CONFIG_SEED: ConfigSeed[] = [
   { category: 'smsHaomas', name: 'app_key', col_num: 12, label: 'AppKey', value: '', input_type: 'text', sort: 40, is_secret: true },
   { category: 'smsHaomas', name: 'template_code', col_num: 12, label: '验证码模板编号', value: '', input_type: 'text', sort: 50 },
 
-  // 第三方登录 OAuth（7 个子类）
-  ...oauthConfigSeed('oauthWechat', '微信开放平台', 'https://open.weixin.qq.com/', {
-    clientIdLabel: 'AppID', clientIdPlaceholder: '微信开放平台应用 AppID',
-  }),
-  ...oauthConfigSeed('oauthOfficialAccount', '微信公众号', 'https://mp.weixin.qq.com/', {
-    clientIdLabel: '公众号AppID', clientIdPlaceholder: '公众号 AppID（用于微信内网页授权登录）',
-    extra: [
-      { name: 'official_account_appid', label: '公众号AppID（支付用）', value: '', placeholder: '一般与上方AppID一致，微信内支付时使用', input_type: 'text', sort: 90 },
-      { name: 'token', label: '消息校验Token', value: '', input_type: 'text', sort: 100 },
-      { name: 'encoding_aes_key', label: '消息加解密密钥', value: '', input_type: 'text', sort: 110, is_secret: true },
-    ],
-  }),
-  ...oauthConfigSeed('oauthQQ', 'QQ互联', 'https://connect.qq.com/manage.html#/'),
-  ...oauthConfigSeed('oauthGoogle', 'Google', 'https://console.developers.google.com/'),
-  ...oauthConfigSeed('oauthGithub', 'GitHub', 'https://github.com/settings/apps/new'),
-  ...oauthConfigSeed('oauthGitee', 'Gitee', 'https://gitee.com/oauth/applications'),
+  // 第三方登录 OAuth（自定义 SSO 接入 user-center）
   ...oauthConfigSeed('oauthCustom', '自定义Oauth', '', {
     clientIdLabel: 'Client ID',
     clientIdPlaceholder: '由统一身份中心(user-center)分配的 client_id（SSO 接入方默认 shanhe_lib_client）',
