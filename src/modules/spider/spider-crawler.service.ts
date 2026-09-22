@@ -243,7 +243,7 @@ export class SpiderCrawlerService {
 
     // 登记下一层页面链接
     if (childUrls.length) {
-      const exist = await this.urlRepo.find({ select: ['url'] });
+      const exist = await this.urlRepo.find({ select: { url: true } });
       const existSet = new Set(exist.map((x) => x.url));
       const rows = childUrls
         .filter((u) => !existSet.has(u))
@@ -269,7 +269,7 @@ export class SpiderCrawlerService {
   }
 
   private async upsertSpiderDocument(absUrl: string, anchorText: string, ext: string): Promise<void> {
-    const exists = await this.docRepo.findOne({ where: { url: absUrl }, select: ['id'] });
+    const exists = await this.docRepo.findOne({ where: { url: absUrl }, select: { id: true } });
     if (exists) return;
     const entity = this.docRepo.create({
       url: absUrl,
@@ -350,7 +350,7 @@ export class SpiderCrawlerService {
       if (items.length) {
         const exist = await this.detailRepo.find({
           where: { article_list_id: Number(row.id) },
-          select: ['url'],
+          select: { url: true },
         });
         const existSet = new Set(exist.map((x) => x.url));
         const fresh = items.filter((it) => !existSet.has(it.url));
@@ -546,12 +546,12 @@ export class SpiderCrawlerService {
     await this.detailRepo.update(id, { status: TASK_STATUS.PUBLISHING, error: '', updated_at: new Date() });
     try {
       const userId = row.user_id > 0 ? row.user_id : 1;
-      const user = await this.userRepo.findOne({ where: { id: userId }, select: ['id'] });
+      const user = await this.userRepo.findOne({ where: { id: userId }, select: { id: true } });
       if (!user) throw new Error('发布用户不存在，请先在编辑中指定用户');
 
       const categoryIds = parseCategoryIds(row.category_id);
       const validCates = categoryIds.length
-        ? await this.categoryRepo.find({ where: { id: In(categoryIds) }, select: ['id'] })
+        ? await this.categoryRepo.find({ where: { id: In(categoryIds) }, select: { id: true } })
         : [];
       const cateIds = validCates.map((c) => Number(c.id));
 
@@ -559,7 +559,7 @@ export class SpiderCrawlerService {
         let identifier = '';
         for (let i = 0; i < 5; i++) {
           identifier = md5(crypto.randomUUID() + Date.now() + i).slice(0, 16);
-          const exist = await manager.findOne(Article, { where: { identifier }, select: ['id'] });
+          const exist = await manager.findOne(Article, { where: { identifier }, select: { id: true } });
           if (!exist) break;
         }
         const now = new Date();
@@ -678,7 +678,7 @@ export class SpiderCrawlerService {
     try {
       if (!row.save_path) throw new Error('文件尚未下载，请先入队下载');
       const userId = row.user_id > 0 ? Number(row.user_id) : 1;
-      const user = await this.userRepo.findOne({ where: { id: userId }, select: ['id'] });
+      const user = await this.userRepo.findOne({ where: { id: userId }, select: { id: true } });
       if (!user) throw new Error('发布用户不存在，请先在编辑中指定用户');
 
       // save_path 形如 "/documents/xx/x/hash.pdf#123"，# 后为附件 ID
@@ -694,10 +694,9 @@ export class SpiderCrawlerService {
 
       const categoryIds = parseCategoryIds(row.category_id);
       const validCates = categoryIds.length
-        ? await this.categoryRepo.find({ where: { id: In(categoryIds) }, select: ['id'] })
+        ? await this.categoryRepo.find({ where: { id: In(categoryIds) }, select: { id: true } })
         : [];
       const cateIds = validCates.map((c) => Number(c.id));
-
       const title = (row.title || row.title_from_href || row.title_from_url || row.title_from_attachment || '未命名文档').slice(0, 255);
       const now = new Date();
 

@@ -46,7 +46,7 @@ export class CategoryService {
 
       const exist = await this.repo.findOne({
         where: { parent_id: parentId, title, type },
-        select: ['id'],
+        select: { id: true },
       });
       if (exist && exist.id > 0) continue;
 
@@ -126,7 +126,7 @@ export class CategoryService {
 
     const children = await this.repo.find({
       where: { parent_id: In(ids), doc_count: 0 },
-      select: ['id'],
+      select: { id: true },
     });
     const childIds = children.map((c) => c.id).filter((id) => id > 0);
     if (childIds.length) await this.deleteRecursive(childIds);

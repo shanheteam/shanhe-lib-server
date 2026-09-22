@@ -555,7 +555,7 @@ export class DocumentService implements OnModuleInit {
     if (ids.length === 0) return;
     let targetIds = ids;
     if (!isAdminFlag) {
-      const docs = await this.docRepo.find({ where: { id: In(ids), user_id: userId }, select: ['id'] } as any);
+      const docs = await this.docRepo.find({ where: { id: In(ids), user_id: userId }, select: { id: true } } as any);
       targetIds = docs.map((d) => Number(d.id));
       if (targetIds.length === 0) throw Biz.permissionDenied('文档不存在或没有删除权限');
     }
@@ -566,7 +566,7 @@ export class DocumentService implements OnModuleInit {
     try {
       const docs = await queryRunner.manager.find(Document, {
         where: { id: In(targetIds), deleted_at: IsNull() },
-        select: ['id', 'user_id', 'deleted_at'],
+        select: { id: true, user_id: true, deleted_at: true },
       } as any);
       const docCates = await queryRunner.manager.find(DocumentCategory, {
         where: { document_id: In(targetIds) },
@@ -1229,7 +1229,7 @@ export class DocumentService implements OnModuleInit {
       }
       const docs = await queryRunner.manager.find(Document, {
         where: { id: In(ids) },
-        select: ['user_id'],
+        select: { user_id: true },
       } as any);
       const userIds = [...new Set(docs.map((d) => Number(d.user_id)).filter((v) => v > 0))];
       for (const uid of userIds) {

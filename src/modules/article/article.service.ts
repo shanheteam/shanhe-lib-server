@@ -108,7 +108,7 @@ export class ArticleService {
 
     const exist = await this.articleRepo.findOne({
       where: { identifier },
-      select: ['id'],
+      select: { id: true },
     });
     if (exist && exist.id > 0) throw Biz.alreadyExists('文章标识符已存在');
 
@@ -261,7 +261,7 @@ export class ArticleService {
     if (!isAdmin) {
       const own = await this.articleRepo.find({
         where: { id: In(idList), user_id: user.userId },
-        select: ['id'],
+        select: { id: true },
       });
       if (!own.length) throw Biz.permissionDenied('您没有权限删除指定文章');
       idList = own.map((o) => o.id);
@@ -287,7 +287,7 @@ export class ArticleService {
 
       const articles = await manager.find(Article, {
         where: { id: In(idList) },
-        select: ['id', 'user_id'],
+        select: { id: true, user_id: true },
       });
       for (const a of articles) {
         await manager.increment(User, { id: a.user_id }, 'article_count', -1);
@@ -515,7 +515,7 @@ export class ArticleService {
 
       const articles = await manager.find(Article, {
         where: { id: In(idList) },
-        select: ['id', 'user_id'],
+        select: { id: true, user_id: true },
       });
       for (const a of articles) {
         await manager.increment(User, { id: a.user_id }, 'article_count', 1);
@@ -542,7 +542,7 @@ export class ArticleService {
     for (;;) {
       const rows = await this.articleRepo.find({
         where: { deleted_at: Not(IsNull()) },
-        select: ['id'],
+        select: { id: true },
         take: 100,
       });
       const ids = rows.map((r) => r.id);
@@ -623,7 +623,7 @@ export class ArticleService {
 
     const target = await this.articleRepo.findOne({
       where: { identifier },
-      select: ['id'],
+      select: { id: true },
     });
     if (!target) throw Biz.notFound('相关文章不存在');
 
@@ -753,7 +753,7 @@ export class ArticleService {
     if (catIds.length) {
       const cats = await this.categoryRepo.find({
         where: { id: In(catIds) },
-        select: ['id', 'title', 'parent_id'],
+        select: { id: true, title: true, parent_id: true },
       });
       for (const c of cats) {
         catMap[c.id] = { id: c.id, title: c.title, parent_id: c.parent_id };
@@ -765,7 +765,7 @@ export class ArticleService {
     if (userIds.length) {
       const users = await this.userRepo.find({
         where: { id: In(userIds) },
-        select: ['id', 'realname', 'avatar', 'doc_count', 'article_count', 'credit_count'],
+        select: { id: true, realname: true, avatar: true, doc_count: true, article_count: true, credit_count: true },
       });
       for (const u of users) {
         userMap[u.id] = {

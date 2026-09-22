@@ -105,7 +105,7 @@ export class OrderService implements OnModuleInit {
 
   async create(userId: number, body: any): Promise<Order> {
     if (userId <= 0) throw Biz.unauthenticated('请先登录');
-    const user = await this.userRepo.findOne({ where: { id: userId }, select: ['id'] });
+    const user = await this.userRepo.findOne({ where: { id: userId }, select: { id: true } });
     if (!user) throw Biz.notFound('用户不存在');
 
     const orderType = Number(body.order_type);
@@ -214,7 +214,7 @@ export class OrderService implements OnModuleInit {
     const amount = Number(body.amount);
     if (!Number.isInteger(userId) || userId <= 0) throw Biz.invalidArgument('用户ID不正确');
     if (!Number.isInteger(amount) || amount === 0) throw Biz.invalidArgument('充值积分数量不正确（正数为充值，负数为扣减）');
-    const user = await this.userRepo.findOne({ where: { id: userId }, select: ['id', 'credit_count'] });
+    const user = await this.userRepo.findOne({ where: { id: userId }, select: { id: true, credit_count: true } });
     if (!user) throw Biz.notFound('用户不存在');
     if (amount < 0 && Number(user.credit_count) + amount < 0) {
       throw Biz.invalidArgument('扣减后积分不能为负');

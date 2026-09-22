@@ -133,7 +133,7 @@ export class ConfigController {
         .filter(Boolean);
 
     const langs = await this.languageRepo.find({
-      select: ['id', 'language', 'code'],
+      select: { id: true, language: true, code: true },
       where: { enable: true },
       order: { sort: 'ASC' },
     });
@@ -467,7 +467,7 @@ export class ConfigController {
     // 文档站点地图
     for (;;) {
       const documents = await this.documentRepo.find({
-        select: ['id', 'updated_at', 'uuid'],
+        select: { id: true, updated_at: true, uuid: true },
         where: { deleted_at: IsNull() },
         order: { id: 'ASC' },
         skip: (page - 1) * limit,
@@ -491,7 +491,7 @@ export class ConfigController {
     // 文章站点地图
     for (;;) {
       const articles = await this.articleRepo.find({
-        select: ['id', 'updated_at', 'identifier'],
+        select: { id: true, updated_at: true, identifier: true },
         where: { deleted_at: IsNull() },
         order: { id: 'ASC' },
         skip: (page - 1) * limit,
@@ -515,7 +515,7 @@ export class ConfigController {
     const now = new Date().toISOString();
     const categories = await this.categoryRepo.find({
       where: { enable: true },
-      select: ['id', 'updated_at'],
+      select: { id: true, updated_at: true },
     });
     const pageUrls: Array<{
       loc: string;

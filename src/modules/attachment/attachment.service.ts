@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { IsNull, Repository } from 'typeorm';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '../../config/config.service';
 import {
@@ -469,7 +469,7 @@ export class AttachmentService {
   }
 
   async getAttachment(id: number): Promise<Record<string, unknown>> {
-    const a = await this.attachmentRepo.findOne({ where: { id, deleted_at: null } });
+    const a = await this.attachmentRepo.findOne({ where: { id, deleted_at: IsNull() } });
     if (!a) throw Biz.notFound('附件不存在');
     return this.serialize(a);
   }

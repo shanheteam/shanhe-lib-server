@@ -35,7 +35,7 @@ export class SpiderUrlService {
     );
     if (!urls.length) throw Biz.invalidArgument('采集链接不能为空');
 
-    const exist = await this.repo.find({ select: ['url'] });
+    const exist = await this.repo.find({ select: { url: true } });
     const existSet = new Set(exist.map((x) => x.url));
     const now = new Date();
     const entities = urls
