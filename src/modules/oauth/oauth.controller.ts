@@ -134,10 +134,7 @@ export class OauthController {
   @Post('sso/logout')
   ssoLogout(@Req() req: Request, @Res({ passthrough: true }) res: Response) {
     const isProd = process.env.NODE_ENV === 'production';
-    const host = (req.hostname || '').toLowerCase();
-    const parts = host.split('.');
-    let domain = '';
-    if (/\.co$/.test(host) && parts.length >= 3) domain = '.' + parts.slice(-2).join('.');
+    const domain = this.sharedCookieDomain(req);
     const secure = isProd ? '; Secure' : '';
     const domainAttr = domain ? `; Domain=${domain}` : '';
     res.setHeader('Set-Cookie', [
@@ -150,11 +147,7 @@ export class OauthController {
   /** 写 user-center 共享 cookie 的通用工具：把 user-center access_token 落在 .shanhe.co 域。 */
   private setSharedAccessTokenCookie(req: Request, res: Response, token: string): void {
     const isProd = process.env.NODE_ENV === 'production';
-    // 从请求域名推导共享父域：lib.shanhe.co → shanhe.co；localhost 则无 domain（仅本机）
-    const host = (req.hostname || '').toLowerCase();
-    const parts = host.split('.');
-    let domain = '';
-    if (/\.co$/.test(host) && parts.length >= 3) domain = '.' + parts.slice(-2).join('.');
+    const domain = this.sharedCookieDomain(req);
     const secure = isProd ? '; Secure' : '';
     res.setHeader(
       'Set-Cookie',
@@ -165,15 +158,27 @@ export class OauthController {
   /** 写 user-center 共享 refresh_token cookie 的工具：轮换后把新 refresh_token 也落到 .shanhe.co。 */
   private setSharedRefreshTokenCookie(req: Request, res: Response, token: string): void {
     const isProd = process.env.NODE_ENV === 'production';
-    const host = (req.hostname || '').toLowerCase();
-    const parts = host.split('.');
-    let domain = '';
-    if (/\.co$/.test(host) && parts.length >= 3) domain = '.' + parts.slice(-2).join('.');
+    const domain = this.sharedCookieDomain(req);
     const secure = isProd ? '; Secure' : '';
     res.setHeader(
       'Set-Cookie',
       `refresh_token=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax${domain ? `; Domain=${domain}` : ''}${secure}; Max-Age=${30 * 24 * 60 * 60}`,
     );
+  }
+
+  /**
+   * 从请求推导 .shanhe.co 共享父域：lib.shanhe.co → .shanhe.co；localhost/127.0.0.1 无 Domain（仅本机）。
+   * 优先取 Host 头（剥离端口），与 user-center cookies.js 的 resolveSharedCookieDomain 取法一致，
+   * 避免 trust proxy 场景下 req.hostname 误判为内部主机名，导致共享 cookie 写成 host-only 而无法跨子站读取。
+   */
+  private sharedCookieDomain(req: Request): string {
+    const hostHeader = String(req.headers['host'] || '').trim();
+    const splitIdx = hostHeader.indexOf(':');
+    const host = (splitIdx > -1 ? hostHeader.slice(0, splitIdx) : hostHeader).toLowerCase();
+    if (!host || host === 'localhost' || host === '127.0.0.1' || host.endsWith('.local')) return '';
+    const parts = host.split('.');
+    if (!/\.co$/.test(host) || parts.length < 3) return '';
+    return '.' + parts.slice(-2).join('.');
   }
 
   /**
