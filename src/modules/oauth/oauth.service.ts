@@ -7,6 +7,7 @@ import { JwtService } from '@nestjs/jwt';
 import { Request } from 'express';
 import { AuthService } from '../../auth/auth.service';
 import { JwksService } from './jwks.service';
+import { verifyIdToken } from './id-token.verify';
 import { Biz, BizException } from '../../common/biz.exception';
 import { makePassword, randomString } from '../../common/password.util';
 
@@ -25,6 +26,7 @@ interface OauthLoginBody {
   code?: string;
   oauth_type?: number;
   code_verifier?: string;
+  nonce?: string;
 }
 
 interface OauthBindBody {
@@ -271,7 +273,8 @@ export class OauthService {
     const access_token = tokenData.access_token || '';
     const refresh_token = tokenData.refresh_token || '';
     const scope = tokenData.scope || '';
-    const openid = tokenData.openid || tokenData.sub || tokenData.id || '';
+    const issuer = this.resolveIssuer(category);
+    const openid = await this.resolveOpenid(tokenData, client_id, issuer, body.nonce);
 
     if (!access_token || !openid) {
       throw Biz.internal('获取用户标识失败');
@@ -380,8 +383,9 @@ export class OauthService {
 
     const access_token = tokenData.access_token || '';
     const refresh_token = tokenData.refresh_token || '';
-    const openid = String(tokenData.openid || tokenData.sub || '');
     const tokenScope = tokenData.scope || scope || '';
+    const issuer = this.resolveIssuer(category);
+    const openid = await this.resolveOpenid(tokenData, client_id, issuer);
 
     if (!access_token || !openid) {
       throw Biz.internal('获取用户标识失败');
@@ -617,7 +621,8 @@ export class OauthService {
     const access_token = tokenData.access_token || '';
     const refresh_token = tokenData.refresh_token || '';
     const scope = tokenData.scope || '';
-    const openid = tokenData.openid || tokenData.sub || tokenData.id || '';
+    const issuer = this.resolveIssuer(category);
+    const openid = await this.resolveOpenid(tokenData, client_id, issuer);
 
     if (!access_token || !openid) {
       throw Biz.internal('获取用户标识失败');
@@ -657,6 +662,52 @@ export class OauthService {
     );
 
     return {};
+  }
+
+  /**
+   * 解析 OIDC issuer：优先取配置的 issuer（须与 Provider discovery 一致），
+   * 为空则从 token_url 的 origin (+可选 /api 前缀) 推导。
+   */
+  private resolveIssuer(category: string): string {
+    const configured = this.config.get(category, 'issuer', '').trim();
+    if (configured) return configured;
+    const tokenUrl = this.config.get(category, 'token_url', '');
+    try {
+      const u = new URL(tokenUrl);
+      const api = /\/api\/oauth\/token/i.test(tokenUrl) ? '/api' : '';
+      return u.origin + api;
+    } catch {
+      return configured;
+    }
+  }
+
+  /**
+   * 身份解析：优先校验 id_token（JWKS 验 RS256 签名 + iss/aud/exp/nonce）取 sub，
+   * 否则回退到 access_token 解析的 openid/sub（旧 Provider 不签 id_token 时兼容）。
+   * id_token 存在但校验失败则硬失败，拒绝脆弱登录。
+   */
+  private async resolveOpenid(
+    tokenData: Record<string, string>,
+    client_id: string,
+    issuer: string,
+    nonce?: string,
+  ): Promise<string> {
+    if (tokenData.id_token) {
+      try {
+        const claims = await verifyIdToken(
+          tokenData.id_token,
+          client_id,
+          issuer,
+          (kid) => this.jwks.getPublicKey(kid),
+          nonce,
+        );
+        console.log(`[OIDC] id_token verified, sub=${String(claims.sub)}`);
+        return String(claims.sub || '');
+      } catch (e: any) {
+        throw Biz.internal(`[OIDC] ` + (e?.message || 'id_token 校验失败'));
+      }
+    }
+    return tokenData.openid || tokenData.sub || tokenData.id || '';
   }
 
   /**
@@ -743,6 +794,7 @@ export class OauthService {
         refresh_token: data.refresh_token || '',
         scope: data.scope || '',
         openid,
+        id_token: data.id_token || '',
       };
     }
 
