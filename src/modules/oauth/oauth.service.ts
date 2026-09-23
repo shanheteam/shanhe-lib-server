@@ -8,6 +8,7 @@ import { Request } from 'express';
 import { AuthService } from '../../auth/auth.service';
 import { JwksService } from './jwks.service';
 import { verifyIdToken } from './id-token.verify';
+import { OidcDiscoveryService } from './oidc-discovery.service';
 import { Biz, BizException } from '../../common/biz.exception';
 import { makePassword, randomString } from '../../common/password.util';
 
@@ -66,6 +67,7 @@ export class OauthService {
     private readonly auth: AuthService,
     private readonly jwtService: JwtService,
     private readonly jwks: JwksService,
+    private readonly discovery: OidcDiscoveryService,
   ) {}
 
   /**
@@ -100,22 +102,26 @@ export class OauthService {
 
       // For custom OAuth, include extra fields and return base authorize URL
       if (category === 'oauthCustom') {
-        const authorizeUrl = this.config.get(category, 'authorize_url');
+        const disc = await this.discovery.discover(category);
+        const tokenUrl =
+          (disc && disc.token_endpoint) || this.config.get(category, 'token_url') || '';
+        const userinfoUrl =
+          (disc && disc.userinfo_endpoint) || this.config.get(category, 'userinfo_url') || '';
+        const authorizeUrl =
+          (disc && disc.authorization_endpoint) || this.config.get(category, 'authorize_url');
         const scope = this.config.get(category, 'scope');
-        oauth.token_url = this.config.get(category, 'token_url');
-        oauth.userinfo_url = this.config.get(category, 'userinfo_url');
+        oauth.token_url = tokenUrl;
+        oauth.userinfo_url = userinfoUrl;
         oauth.scope = scope;
         // Return base authorization URL (without query params, frontend will build with PKCE)
-        oauth.authorize_url_base = authorizeUrl && authorizeUrl.startsWith('http') ? authorizeUrl : '';
+        oauth.authorize_url_base =
+          authorizeUrl && authorizeUrl.startsWith('http') ? authorizeUrl : '';
+        // logout 与 authorize 同 issuer 基址：user 端 /oauth/logout，Discovery 缺失时再按 token_url 推导
+        try {
+          const ucApi = tokenUrl ? this.ucBaseOf(tokenUrl) : '';
+          if (ucApi) oauth.logout_url = `${ucApi}/oauth/logout`;
+        } catch { /* 无法推导时不提供 logout_url，前端走兜底 */ }
       }
-
-
-      // logout 与 authorize 同基址：user 端 /oauth/logout。优先由后端推导，避免前端依赖
-      // authorize_url_base 以 /authorize 结尾改写导致不跳转（SLO 失效）。
-      try {
-        const ucApi = this.ucBase().replace(/\/$/, '');
-        if (ucApi) oauth.logout_url = `${ucApi}/oauth/logout`;
-      } catch { /* 无 token_url 时不提供 logout_url，前端走兜底 */ }      oauths.push(oauth);
     }
 
     return { oauths };
@@ -132,6 +138,11 @@ export class OauthService {
     if (!tokenUrl) {
       throw Biz.internal('自定义OAuth未配置token_url');
     }
+    return this.ucBaseOf(tokenUrl);
+  }
+
+  /** 从任意 uc 端点推导 uc API 基址（形如 /api/oauth/token → https://apiuser.shanhe.co/api）。 */
+  private ucBaseOf(tokenUrl: string): string {
     const idx = tokenUrl.lastIndexOf('/api');
     if (idx < 0) {
       throw Biz.internal('自定义OAuth token_url 格式异常');
@@ -273,7 +284,7 @@ export class OauthService {
     const access_token = tokenData.access_token || '';
     const refresh_token = tokenData.refresh_token || '';
     const scope = tokenData.scope || '';
-    const issuer = this.resolveIssuer(category);
+    const issuer = await this.resolveIssuer(category);
     const openid = await this.resolveOpenid(tokenData, client_id, issuer, body.nonce);
 
     if (!access_token || !openid) {
@@ -325,14 +336,16 @@ export class OauthService {
 
     const client_id = this.config.get(category, 'client_id');
     const client_secret = this.config.get(category, 'client_secret');
-    const token_url = this.config.get(category, 'token_url');
+    const disc = await this.discovery.discover(category);
+    const token_url =
+      (disc && disc.token_endpoint) || this.config.get(category, 'token_url');
     const scope = (this.config.get(category, 'scope') || 'openid profile email').trim();
 
     if (!client_id || !client_secret) {
       throw Biz.internal('OAuth配置不完整');
     }
     if (!token_url) {
-      throw Biz.internal('自定义OAuth未配置token_url');
+      throw Biz.internal('自定义OAuth未配置token_url（且 Discovery 未发现）');
     }
 
     // 1. 用 password grant 换 token（凭据在 confidential 客户端下经 lib 后端转发）
@@ -384,7 +397,7 @@ export class OauthService {
     const access_token = tokenData.access_token || '';
     const refresh_token = tokenData.refresh_token || '';
     const tokenScope = tokenData.scope || scope || '';
-    const issuer = this.resolveIssuer(category);
+    const issuer = await this.resolveIssuer(category);
     const openid = await this.resolveOpenid(tokenData, client_id, issuer);
 
     if (!access_token || !openid) {
@@ -621,7 +634,7 @@ export class OauthService {
     const access_token = tokenData.access_token || '';
     const refresh_token = tokenData.refresh_token || '';
     const scope = tokenData.scope || '';
-    const issuer = this.resolveIssuer(category);
+    const issuer = await this.resolveIssuer(category);
     const openid = await this.resolveOpenid(tokenData, client_id, issuer);
 
     if (!access_token || !openid) {
@@ -668,7 +681,10 @@ export class OauthService {
    * 解析 OIDC issuer：优先取配置的 issuer（须与 Provider discovery 一致），
    * 为空则从 token_url 的 origin (+可选 /api 前缀) 推导。
    */
-  private resolveIssuer(category: string): string {
+  private async resolveIssuer(category: string): Promise<string> {
+    const disc = await this.discovery.discover(category);
+    const discovered = disc && disc.issuer;
+    if (discovered) return discovered;
     const configured = this.config.get(category, 'issuer', '').trim();
     if (configured) return configured;
     const tokenUrl = this.config.get(category, 'token_url', '');
@@ -724,9 +740,11 @@ export class OauthService {
     const category = OAUTH_TYPE_TO_CATEGORY[oauthType];
 
     if (category === 'oauthCustom') {
-      const token_url = this.config.get(category, 'token_url');
+      const disc = await this.discovery.discover(category);
+      const token_url =
+        (disc && disc.token_endpoint) || this.config.get(category, 'token_url');
       if (!token_url) {
-        throw Biz.internal('自定义OAuth未配置token_url');
+        throw Biz.internal('自定义OAuth未配置token_url（且 Discovery 未发现）');
       }
 
       const params = new URLSearchParams({
@@ -813,9 +831,11 @@ export class OauthService {
     const category = OAUTH_TYPE_TO_CATEGORY[oauthType];
 
     if (category === 'oauthCustom') {
-      const userinfo_url = this.config.get(category, 'userinfo_url');
+      const disc = await this.discovery.discover(category);
+      const userinfo_url =
+        (disc && disc.userinfo_endpoint) || this.config.get(category, 'userinfo_url');
       if (!userinfo_url) {
-        throw Biz.internal('自定义OAuth未配置userinfo_url');
+        throw Biz.internal('自定义OAuth未配置userinfo_url（且 Discovery 未发现）');
       }
 
       let response: Response | undefined;

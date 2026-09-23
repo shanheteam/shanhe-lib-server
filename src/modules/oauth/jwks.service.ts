@@ -1,11 +1,12 @@
 import { createPublicKey } from 'node:crypto';
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '../../config/config.service';
+import { OidcDiscoveryService } from './oidc-discovery.service';
 
 /**
  * 拉取并缓存 user-center（SSO 身份提供方）的 JWKS 公钥（PEM），供 RS256 校验其 access_token。
- * 读取 oauthCustom.jwks_uri（与 token_url/userinfo_url 同 category 配置），为空时从 token_url
- * 推导出 /oauth/jwks 地址。按 kid 缓存 PEM；刷新失败时保留旧公钥静默兜底（兼容公钥轮换）。
+ * 优先取 Discovery 的 jwks_uri，其次读 oauthCustom.jwks_uri，再为空时从 token_url 推导出 /oauth/jwks。
+ * 按 kid 缓存 PEM；刷新失败时保留旧公钥静默兜底（兼容公钥轮换）。
  */
 @Injectable()
 export class JwksService {
@@ -14,11 +15,14 @@ export class JwksService {
   private lastFetch = 0;
   private readonly TTL = 60 * 60 * 1000; // 1h 缓存
 
-  constructor(private readonly config: ConfigService) {}
+  constructor(
+    private readonly config: ConfigService,
+    private readonly discovery: OidcDiscoveryService,
+  ) {}
 
   /** 返回校验 user-center access_token 所需的 PEM 公钥（优先匹配 kid，其次任意可用公钥）。 */
   async getPublicKey(kid?: string): Promise<string | undefined> {
-    const jwksUri = this.resolveJwksUri();
+    const jwksUri = await this.resolveJwksUri();
     if (!jwksUri) return undefined;
 
     const now = Date.now();
@@ -31,7 +35,10 @@ export class JwksService {
     return key;
   }
 
-  private resolveJwksUri(): string {
+  private async resolveJwksUri(): Promise<string> {
+    const disc = await this.discovery.discover('oauthCustom');
+    if (disc && disc.jwks_uri) return disc.jwks_uri;
+
     const configured = this.config.get('oauthCustom', 'jwks_uri', '').trim();
     if (configured) return configured;
     const tokenUrl = this.config.get('oauthCustom', 'token_url', '');

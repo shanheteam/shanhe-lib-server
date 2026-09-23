@@ -5,6 +5,7 @@ import { User, UserGroup, Group, UserOauth } from '../../entities';
 import { OauthController } from './oauth.controller';
 import { OauthService } from './oauth.service';
 import { JwksService } from './jwks.service';
+import { OidcDiscoveryService } from './oidc-discovery.service';
 
 @Module({
   imports: [
@@ -12,6 +13,6 @@ import { JwksService } from './jwks.service';
     JwtModule.register({}),
   ],
   controllers: [OauthController],
-  providers: [OauthService, JwksService],
+  providers: [OauthService, JwksService, OidcDiscoveryService],
 })
 export class OauthModule {}

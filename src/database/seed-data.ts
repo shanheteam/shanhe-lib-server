@@ -420,6 +420,7 @@ export const CONFIG_SEED: ConfigSeed[] = [
       { name: 'userinfo_url', label: '获取用户信息地址', value: '', input_type: 'text', sort: 110 },
       { name: 'scope', label: '授权范围(scope)', value: '', input_type: 'text', sort: 120 },
       { name: 'issuer', label: 'OIDC Issuer', value: '', placeholder: '须与统一身份中心 discovery 的 issuer 完全一致，如 https://apiuser.shanhe.co/api', input_type: 'text', sort: 130 },
+      { name: 'discovery_url', label: 'OIDC Discovery地址', value: '', placeholder: '可选，如 https://apiuser.shanhe.co/api/.well-known/openid-configuration；留空则按 issuer/token_url 自动推导', input_type: 'text', sort: 140 },
     ],
   }),
 ];
