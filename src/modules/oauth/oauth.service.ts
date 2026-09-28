@@ -133,6 +133,7 @@ export class OauthService {
             : '';
         if (endSession) oauth.logout_url = endSession;
       }
+      oauths.push(oauth);
     }
 
     return { oauths };
