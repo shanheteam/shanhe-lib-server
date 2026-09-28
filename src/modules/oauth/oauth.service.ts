@@ -153,13 +153,16 @@ export class OauthService {
     return this.ucBaseOf(tokenUrl);
   }
 
-  /** 从任意 uc 端点推导 uc API 基址（形如 /api/oauth/token → https://apiuser.shanhe.co/api）。 */
+  /** 从任意 uc 端点推导 uc API 基址（形如 /api/oauth/token → https://apiuser.shanhe.co/api）。
+   * 必须用 URL 解析取 origin，禁止用 lastIndexOf('/api') 切字符串——host 含 "apiuser" 时
+   * 会误匹配出 `http://api` 之类的错误基址。 */
   private ucBaseOf(tokenUrl: string): string {
-    const idx = tokenUrl.lastIndexOf('/api');
-    if (idx < 0) {
+    try {
+      const u = new URL(tokenUrl);
+      return `${u.origin.replace(/\/+$/, '')}/api`;
+    } catch {
       throw Biz.internal('自定义OAuth token_url 格式异常');
     }
-    return tokenUrl.slice(0, idx + '/api'.length);
   }
 
   /**
