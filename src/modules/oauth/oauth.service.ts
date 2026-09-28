@@ -116,11 +116,22 @@ export class OauthService {
         // Return base authorization URL (without query params, frontend will build with PKCE)
         oauth.authorize_url_base =
           authorizeUrl && authorizeUrl.startsWith('http') ? authorizeUrl : '';
-        // logout 与 authorize 同 issuer 基址：user 端 /oauth/logout，Discovery 缺失时再按 token_url 推导
-        try {
-          const ucApi = tokenUrl ? this.ucBaseOf(tokenUrl) : '';
-          if (ucApi) oauth.logout_url = `${ucApi}/oauth/logout`;
-        } catch { /* 无法推导时不提供 logout_url，前端走兜底 */ }
+        // logout 优先按 token_url 推导 uc 基址拼 /oauth/logout（token_url 是登录实测可达的地址，
+        // ucBaseOf 保留 /api 前缀，保证与 user-center 实际路由 /api/oauth/logout 一致）。
+        // Discovery 的 end_session_endpoint 仅在无法推导时作为兜底——因为 OIDC_ISSUER 未配置时
+        // discovery 可能返回缺 /api 前缀的端点，直接跳会 404 导致 user 端会话残留。
+        const endSession = tokenUrl
+          ? (() => {
+              try {
+                return `${this.ucBaseOf(tokenUrl)}/oauth/logout`;
+              } catch {
+                return disc && disc.end_session_endpoint ? disc.end_session_endpoint : '';
+              }
+            })()
+          : disc && disc.end_session_endpoint
+            ? disc.end_session_endpoint
+            : '';
+        if (endSession) oauth.logout_url = endSession;
       }
     }
 
@@ -678,8 +689,8 @@ export class OauthService {
   }
 
   /**
-   * 解析 OIDC issuer：优先取配置的 issuer（须与 Provider discovery 一致），
-   * 为空则从 token_url 的 origin (+可选 /api 前缀) 推导。
+   * 解析 OIDC issuer：优先取 discovery 的 issuer（与 Provider 一致），
+   * 为空则从 token_url 的 origin (+ /api/oauth 挂载前缀) 推导。
    */
   private async resolveIssuer(category: string): Promise<string> {
     const disc = await this.discovery.discover(category);
@@ -690,8 +701,8 @@ export class OauthService {
     const tokenUrl = this.config.get(category, 'token_url', '');
     try {
       const u = new URL(tokenUrl);
-      const api = /\/api\/oauth\/token/i.test(tokenUrl) ? '/api' : '';
-      return u.origin + api;
+      const prefix = /\/api\/oauth\/token/i.test(tokenUrl) ? '/api/oauth' : '';
+      return u.origin + prefix;
     } catch {
       return configured;
     }

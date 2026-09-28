@@ -8,6 +8,7 @@ export interface OidcDiscoveryDoc {
   token_endpoint?: string;
   userinfo_endpoint?: string;
   jwks_uri?: string;
+  end_session_endpoint?: string;
   token_endpoint_auth_methods_supported?: string[];
 }
 
@@ -46,6 +47,7 @@ export class OidcDiscoveryService {
         token_endpoint: body.token_endpoint as string | undefined,
         userinfo_endpoint: body.userinfo_endpoint as string | undefined,
         jwks_uri: body.jwks_uri as string | undefined,
+        end_session_endpoint: body.end_session_endpoint as string | undefined,
         token_endpoint_auth_methods_supported: body.token_endpoint_auth_methods_supported as
           | string[]
           | undefined,
@@ -75,10 +77,13 @@ export class OidcDiscoveryService {
     return '';
   }
 
-  /** 从 /api/oauth/token 或 /oauth/authorize 推导 issuer 基址（与 Provider OIDC_ISSUER 推导对齐）。 */
+  /** 从 /api/oauth/token 或 /oauth/authorize 推导 issuer 基址（与 Provider OIDC_ISSUER 推导对齐）。
+   * 优先取 /api/oauth 前缀（user-center 端点实际挂载前缀），否则 /api，最后退到 origin。 */
   private deriveOidcBase(url: string): string {
     try {
       const u = new URL(url);
+      const m = u.pathname.match(/^(\/api\/oauth)\//i);
+      if (m) return (u.origin + m[1]).replace(/\/+$/, '');
       if (/\/api\//i.test(u.pathname)) return (u.origin + '/api').replace(/\/+$/, '');
       return u.origin.replace(/\/+$/, '');
     } catch {
