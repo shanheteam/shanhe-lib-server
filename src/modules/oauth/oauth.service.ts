@@ -28,6 +28,8 @@ interface OauthLoginBody {
   oauth_type?: number;
   code_verifier?: string;
   nonce?: string;
+  /** 弹窗认证使用的回调地址（user-center /v1/callback），换 token 时必须与授权请求一致 */
+  redirect_uri?: string;
 }
 
 interface OauthBindBody {
@@ -280,7 +282,13 @@ export class OauthService {
 
     const client_id = this.config.get(category, 'client_id');
     const client_secret = this.config.get(category, 'client_secret');
-    const redirect_url = this.config.get(category, 'redirect_url');
+    // 换 token 的 redirect_uri 必须与授权请求完全一致：优先采用前端回传的弹窗回调地址
+    // （user-center /v1/callback），未传时回退后台配置的历史回调地址。
+    const bodyRedirect = String(body.redirect_uri || '').trim();
+    const redirect_url =
+      bodyRedirect && /^https:\/\//.test(bodyRedirect)
+        ? bodyRedirect
+        : this.config.get(category, 'redirect_url');
 
     if (!client_id || !client_secret) {
       throw Biz.internal('OAuth配置不完整');
