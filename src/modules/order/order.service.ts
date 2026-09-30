@@ -119,10 +119,12 @@ export class OrderService implements OnModuleInit {
     let amountFen = 0; // 实付（分）
 
     if (orderType === ORDER_TYPE.RECHARGE) {
+      const creditName = this.config.getCreditName();
       const creditsPerUnit = Number(body.product_id || body.amount);
-      if (!Number.isInteger(creditsPerUnit) || creditsPerUnit <= 0) throw Biz.invalidArgument('充值积分数不正确');
+      if (!Number.isInteger(creditsPerUnit) || creditsPerUnit <= 0)
+        throw Biz.invalidArgument(`充值${creditName}数量不正确`);
       productId = creditsPerUnit * quantity;
-      productName = `账户充值 ${productId} 积分`;
+      productName = `账户充值 ${productId} ${creditName}`;
       priceFen = this.creditsToFen(creditsPerUnit);
       amountFen = priceFen * quantity;
     } else if (orderType === ORDER_TYPE.VIP) {
@@ -210,14 +212,16 @@ export class OrderService implements OnModuleInit {
   // ---------- 系统充值 ----------
 
   async systemRecharge(operatorId: number, body: any): Promise<Order> {
+    const creditName = this.config.getCreditName();
     const userId = Number(body.user_id);
     const amount = Number(body.amount);
     if (!Number.isInteger(userId) || userId <= 0) throw Biz.invalidArgument('用户ID不正确');
-    if (!Number.isInteger(amount) || amount === 0) throw Biz.invalidArgument('充值积分数量不正确（正数为充值，负数为扣减）');
+    if (!Number.isInteger(amount) || amount === 0)
+      throw Biz.invalidArgument(`充值${creditName}数量不正确（正数为充值，负数为扣减）`);
     const user = await this.userRepo.findOne({ where: { id: userId }, select: { id: true, credit_count: true } });
     if (!user) throw Biz.notFound('用户不存在');
     if (amount < 0 && Number(user.credit_count) + amount < 0) {
-      throw Biz.invalidArgument('扣减后积分不能为负');
+      throw Biz.invalidArgument(`扣减后${creditName}不能为负`);
     }
 
     const now = new Date();

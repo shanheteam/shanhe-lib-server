@@ -1,5 +1,7 @@
 // 种子数据：与原版 model/data.go、model/config.go、model/init.go、model/article.go 保持一致
 
+import { DEFAULT_CREDIT_NAME } from '../common/credit.constant';
+
 export interface PermissionSeed {
   title: string;
   description: string;
@@ -240,7 +242,7 @@ export const CONFIG_SEED: ConfigSeed[] = [
   { category: 'download', name: 'times_every_ip', col_num: 12, label: '允许每个IP每天下载次数', value: '10', placeholder: '允许每个IP每天下载的次数', input_type: 'number', sort: 41 },
   { category: 'download', name: 'secret_key', col_num: 12, label: '链接签名密钥', value: 'moredoc', placeholder: '链接签名密钥，用于加密下载链接', input_type: 'text', sort: 50 },
 
-  { category: 'score', name: 'credit_name', col_num: 8, label: '积分名称', value: '魔豆', placeholder: '请输入网站的积分名称，默认为魔豆', input_type: 'text', sort: 1 },
+  { category: 'score', name: 'credit_name', col_num: 8, label: '积分名称', value: DEFAULT_CREDIT_NAME, placeholder: `请输入网站的积分名称，默认为${DEFAULT_CREDIT_NAME}`, input_type: 'text', sort: 1 },
   { category: 'score', name: 'register', col_num: 8, label: '注册', value: '10', placeholder: '注册时获得的积分', input_type: 'number', sort: 10 },
   { category: 'score', name: 'sign_in', col_num: 8, label: '签到', value: '1', placeholder: '每日签到获得的积分', input_type: 'number', sort: 20 },
   { category: 'score', name: 'delete_document', col_num: 8, label: '删除文档', value: '1', placeholder: '删除上传文档扣除的积分，0表示不扣除', input_type: 'number', sort: 25 },

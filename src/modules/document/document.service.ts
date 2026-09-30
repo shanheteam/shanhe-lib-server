@@ -899,7 +899,7 @@ export class DocumentService implements OnModuleInit {
     } as any);
     if (!attachment) throw Biz.notFound('附件不存在');
 
-    const creditName = this.config.get('score', 'credit_name', '魔豆');
+    const creditName = this.config.getCreditName();
     const price = Number(doc.price);
     const isOwner = Number(doc.user_id) === userId;
     let isPay = price > 0 && !isOwner;
@@ -975,7 +975,7 @@ export class DocumentService implements OnModuleInit {
     }
     const maxPrice = this.config.getInt('download', 'max_price', 0);
     if (price > maxPrice) {
-      const creditName = this.config.get('score', 'credit_name', '魔豆');
+      const creditName = this.config.getCreditName();
       throw Biz.permissionDenied(`下载码只能免费下载价格不超过${maxPrice}${creditName}的文档`);
     }
     const normalized = String(code).trim();

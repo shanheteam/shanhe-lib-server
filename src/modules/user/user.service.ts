@@ -638,7 +638,8 @@ export class UserService {
         .execute();
     }
 
-    const content = award > 0 ? `签到成功，获得 ${award} 积分奖励` : '完成了每日签到';
+    const content =
+      award > 0 ? `签到成功，获得 ${award} ${this.config.getCreditName()}奖励` : '完成了每日签到';
     await this.dynamicRepo.save(
       this.dynamicRepo.create({
         user_id: user.userId,

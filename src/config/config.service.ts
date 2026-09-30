@@ -2,6 +2,7 @@ import { Injectable, OnModuleInit } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Config } from '../entities';
+import { DEFAULT_CREDIT_NAME } from '../common/credit.constant';
 import { env } from './env';
 
 /**
@@ -58,6 +59,14 @@ export class ConfigService implements OnModuleInit {
   getInt(category: string, name: string, def = 0): number {
     const v = parseInt(this.get(category, name, ''), 10);
     return Number.isNaN(v) ? def : v;
+  }
+
+  /**
+   * 积分/货币展示名。后台可通过 `score.credit_name` 自定义，
+   * 未配置或配置为空串时回退到 DEFAULT_CREDIT_NAME，避免文案里出现空白名称。
+   */
+  getCreditName(): string {
+    return this.get('score', 'credit_name', '').trim() || DEFAULT_CREDIT_NAME;
   }
 
   /**
