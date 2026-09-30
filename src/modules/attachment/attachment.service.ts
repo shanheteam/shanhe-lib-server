@@ -503,7 +503,13 @@ export class AttachmentService {
       .getMany();
 
     const idSet = [...new Set(list.map((a) => a.user_id).filter((id) => id > 0))];
-    const users = idSet.length ? await this.userRepo.find({ where: { id: idSet as any } }) : [];
+    // 只取用到的列（下方仅用 realname || email），避免把 password 哈希等无关列拉进内存
+    const users = idSet.length
+      ? await this.userRepo.find({
+          select: { id: true, realname: true, email: true },
+          where: { id: idSet as any },
+        })
+      : [];
     const nameMap = new Map(users.map((u) => [u.id, u.realname || u.email]));
 
     const attachment = list.map((a) => {

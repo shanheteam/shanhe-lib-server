@@ -80,7 +80,11 @@ export class ReportService {
     const docIds = [...new Set(rows.map((r) => Number(r.document_id)).filter((id) => id > 0))];
     const uuidMap = new Map<number, string>();
     if (docIds.length) {
-      const docs = await this.documentRepo.find({ where: { id: docIds as any } });
+      // 只取用到的列（下方仅用 uuid），避免把 description/content 等长文本列拉进内存
+      const docs = await this.documentRepo.find({
+        select: { id: true, uuid: true },
+        where: { id: docIds as any },
+      });
       for (const d of docs) uuidMap.set(Number(d.id), d.uuid);
     }
 

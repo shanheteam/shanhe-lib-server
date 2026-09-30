@@ -264,8 +264,13 @@ export class CommentService {
     if (!comment) return [];
 
     const userIds = [...new Set(comments.map((c) => c.user_id).filter((id) => id > 0))];
+    // 只取用得到的列（下方只用到 id/avatar/realname/identity），避免把 password 哈希等
+    // 无关列随每条评论的用户一起拉进内存
     const users = userIds.length
-      ? await this.userRepo.find({ where: { id: userIds as any } })
+      ? await this.userRepo.find({
+          select: { id: true, avatar: true, realname: true, identity: true },
+          where: { id: userIds as any },
+        })
       : [];
     const userMap = new Map(users.map((u) => [u.id, u]));
 

@@ -105,7 +105,11 @@ export class PunishmentService {
     const displayUserIds = [...new Set(rows.map((r) => Number(r.user_id)).filter((id) => id > 0))];
     const userMap = new Map<number, User>();
     if (displayUserIds.length) {
-      const users = await this.userRepo.find({ where: { id: displayUserIds as any } });
+      // 只取用到的列（下方仅用 realname），避免把 password 哈希等无关列拉进内存
+      const users = await this.userRepo.find({
+        select: { id: true, realname: true },
+        where: { id: displayUserIds as any },
+      });
       for (const u of users) userMap.set(Number(u.id), u);
     }
 

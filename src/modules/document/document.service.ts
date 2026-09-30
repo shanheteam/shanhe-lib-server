@@ -90,6 +90,17 @@ export class DocumentService implements OnModuleInit {
   private readonly logger = new Logger(DocumentService.name);
   private converting = false;
   private timer: NodeJS.Timeout | null = null;
+  /**
+   * 存量迁移扫描的空转退避状态。
+   * 迁移查询的 `path NOT LIKE 'http%'` 走不了索引，队列清空后每次 tick（5 秒）都是一次全表扫描。
+   * 连续空扫时按 2 的幂拉长下一次扫描间隔（上限 5 分钟），一旦真的迁移了文件就立刻恢复每 tick 扫描。
+   * 与「按 MAX(attachment.id) 短路」的关键区别：退避只延后下一次扫描，绝不跳过任何待迁移文件
+   * ——即使期间有文档被后台审核置为 Converted（不新增附件、不改 updated_at），最多晚 5 分钟也会被扫到。
+   */
+  private migrateIdleStreak = 0;
+  private migrateNextScanAt = 0;
+  private static readonly TICK_INTERVAL_MS = 5000;
+  private static readonly MIGRATE_BACKOFF_MAX_MS = 5 * 60 * 1000;
 
   constructor(
     @InjectRepository(Document)
@@ -324,7 +335,12 @@ export class DocumentService implements OnModuleInit {
       if (d.deleted_user_id > 0) userIds.add(Number(d.deleted_user_id));
     });
 
-    const users = userIds.size > 0 ? await this.userRepo.find({ where: { id: In([...userIds]) } }) : [];
+    // 只取用得到的列：原实现取全列，会把 password 哈希与 address/signature 等长文本
+    // 一并从数据库拉进内存（列表接口每批文档都要走一次），此处仅需 realname。
+    const users =
+      userIds.size > 0
+        ? await this.userRepo.find({ select: { id: true, realname: true }, where: { id: In([...userIds]) } })
+        : [];
     const userMap = new Map<number, User>();
     users.forEach((u) => userMap.set(Number(u.id), u));
 
@@ -1071,9 +1087,19 @@ export class DocumentService implements OnModuleInit {
         created_at: new Date(),
         updated_at: new Date(),
       });
-      const scoreCount = Number(doc.score_count) + 1;
-      const newScore = Math.round((score + Number(doc.score) * Number(doc.score_count)) / scoreCount);
-      await queryRunner.manager.update(Document, documentId, { score: newScore, score_count: scoreCount });
+      // 用数据库当前值原子计算，避免「事务外读 doc.score/score_count、事务内写回」的丢更新：
+      // 并发评分时两个请求都会读到同样的旧值，后写的一方会覆盖前者。
+      // 公式与原实现一致：newScore = round((score + 旧score × 旧count) / (旧count + 1))。
+      await queryRunner.manager
+        .createQueryBuilder()
+        .update(Document)
+        .set({
+          score: () => 'ROUND((:newScore + score * score_count) / (score_count + 1))',
+          score_count: () => 'score_count + 1',
+        })
+        .where('id = :id', { id: documentId })
+        .setParameter('newScore', score)
+        .execute();
       await queryRunner.commitTransaction();
     } catch (e) {
       await queryRunner.rollbackTransaction();
@@ -1261,21 +1287,32 @@ export class DocumentService implements OnModuleInit {
 
   async deleteRecycleDocument(ids: number[]): Promise<void> {
     if (ids.length === 0) return;
-    // 彻底删除：附件、分类关联、文档本身
-    await this.attachmentRepo.delete({ type: AttachmentTypeDocument, type_id: In(ids) });
-    await this.docCateRepo.delete({ document_id: In(ids) });
-    await this.docRepo.delete(ids);
+    // 彻底删除：附件、分类关联、文档本身。
+    // 三条 DELETE 必须在同一事务内，否则中途失败会留下「附件已删、文档还在」这类
+    // 无法预览的孤儿数据，或「文档已删、分类关联还在」的脏关联。
+    await this.dataSource.transaction(async (manager) => {
+      await manager.delete(Attachment, { type: AttachmentTypeDocument, type_id: In(ids) });
+      await manager.delete(DocumentCategory, { document_id: In(ids) });
+      await manager.delete(Document, ids);
+    });
   }
 
   async clearRecycleDocument(): Promise<void> {
-    const docs = await this.docRepo
-      .createQueryBuilder('d')
-      .select('d.id')
-      .where('d.deleted_at IS NOT NULL')
-      .getMany();
-    if (docs.length === 0) return;
-    const ids = docs.map((d) => Number(d.id));
-    await this.deleteRecycleDocument(ids);
+    // 分批清理：回收站可能积累大量文档，一次性把所有 id 拼进 `IN (...)` 会构造超大 SQL
+    // （行数够多时可能超过 max_allowed_packet 而整体失败）。每批 500 条，逐批删除。
+    const BATCH = 500;
+    for (;;) {
+      const docs = await this.docRepo
+        .createQueryBuilder('d')
+        .select('d.id')
+        .where('d.deleted_at IS NOT NULL')
+        .orderBy('d.id', 'ASC')
+        .limit(BATCH)
+        .getMany();
+      if (docs.length === 0) return;
+      await this.deleteRecycleDocument(docs.map((d) => Number(d.id)));
+      if (docs.length < BATCH) return;
+    }
   }
 
   // ================== 转换流水线 ==================
@@ -1335,13 +1372,30 @@ export class DocumentService implements OnModuleInit {
     try {
       // 优先处理待转换文档；无待转换任务时，尝试迁移存量本地文档到 OSS
       if (!(await this.convertNextDocument())) {
-        await this.migrateNextDocument();
+        await this.maybeMigrateNextDocument();
       }
     } catch (e) {
       this.logger.error(`转换 worker 异常：${(e as Error).message}`);
     } finally {
       this.converting = false;
     }
+  }
+
+  /** 按空转退避节奏执行存量迁移扫描：有进展立即恢复每 tick 扫描，连续空扫则逐步拉长间隔。 */
+  private async maybeMigrateNextDocument(): Promise<void> {
+    if (Date.now() < this.migrateNextScanAt) return;
+    const migrated = await this.migrateNextDocument();
+    if (migrated) {
+      this.migrateIdleStreak = 0;
+      this.migrateNextScanAt = 0;
+      return;
+    }
+    this.migrateIdleStreak = Math.min(this.migrateIdleStreak + 1, 10);
+    const backoff = Math.min(
+      DocumentService.TICK_INTERVAL_MS * 2 ** this.migrateIdleStreak,
+      DocumentService.MIGRATE_BACKOFF_MAX_MS,
+    );
+    this.migrateNextScanAt = Date.now() + backoff;
   }
 
   private async convertNextDocument(): Promise<boolean> {
@@ -1355,8 +1409,13 @@ export class DocumentService implements OnModuleInit {
   }
 
   /** 存量迁移：将已转换但仅存本地的文档附件（原文件+预览页+封面）上传到 OSS 并清理本地。 */
-  private async migrateNextDocument(): Promise<void> {
-    if (!this.ossService.isEnabled()) return;
+  /**
+   * 迁移一篇存量本地文档到 OSS。返回「本次是否真正处理了文件」。
+   * 注意：查询里 `path NOT LIKE 'http%'` 无法走索引（attachment 上也没有 path 索引），
+   * 队列为空时每次调用都是一次全表扫描，故调用方 tick() 会按空转情况逐步退避。
+   */
+  private async migrateNextDocument(): Promise<boolean> {
+    if (!this.ossService.isEnabled()) return false;
     const attachment = await this.attachmentRepo
       .createQueryBuilder('a')
       .innerJoin(Document, 'd', 'd.id = a.type_id')
@@ -1367,23 +1426,24 @@ export class DocumentService implements OnModuleInit {
       .orderBy('a.id', 'ASC')
       .take(1)
       .getOne();
-    if (!attachment) return;
+    if (!attachment) return false;
 
     const hash = String(attachment.hash || '');
     const ext = String(attachment.ext || '').toLowerCase();
     const relPath = String(attachment.path || '').replace(/^\/+/, '');
     if (!hash || !relPath) {
       this.logger.warn(`存量迁移跳过（attachment_id=${attachment.id}）：附件路径或 hash 无效`);
-      return;
+      return false;
     }
     const srcPath = path.resolve(process.cwd(), relPath);
     if (!fs.existsSync(srcPath)) {
       this.logger.warn(`存量迁移跳过（attachment_id=${attachment.id}）：本地原文件不存在`);
-      return;
+      return false;
     }
     const srcExt = path.extname(srcPath);
     const baseDir = srcPath.slice(0, srcPath.length - srcExt.length);
     await this.uploadDocumentFilesToOss(attachment, srcPath, baseDir);
+    return true;
   }
 
   private async handleDocument(doc: Document): Promise<void> {

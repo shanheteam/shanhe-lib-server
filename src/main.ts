@@ -90,7 +90,11 @@ async function bootstrap() {
     res.setHeader('X-Content-Type-Options', 'nosniff');
   };
   app.useStaticAssets(uploadsDir, { prefix: '/' + env.uploadDir, setHeaders: staticHeaders });
-  app.useStaticAssets(documentsDir, { prefix: '/' + env.documentDir, setHeaders: staticHeaders });
+  // 注意：documents 目录（文档原文件 + 预览页）刻意不对外静态暴露。
+  // 原文件路径可由 md5 推导（documents/{hash 前5位拆目录}/{hash}{ext}），而 hash 会随文档列表/详情
+  // 接口下发，静态挂载下任何人拿到 hash 即可直接下载原文件，绕过 /download/:jwt 的登录、积分与
+  // 次数校验。预览页与封面已分别由 /view/page/:hash/:page、/view/cover/:hash 用 sendFile 绝对路径提供
+  // （见 file.controller.ts），下载走 /download/:jwt，均不依赖静态挂载，故移除不影响任何对外功能。
   // sitemap 目录对外暴露，使 /sitemap.xml 及分页文件可被搜索引擎访问
   app.useStaticAssets(sitemapDir, { prefix: '/sitemap', setHeaders: staticHeaders });
 
