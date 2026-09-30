@@ -141,8 +141,18 @@ export class DocumentService implements OnModuleInit {
     return n;
   }
 
+  /**
+   * 按「码点」截断字符串，语义等价于 Array.from(str).slice(0, length).join('')。
+   * 原实现会把整段字符串展开成等长数组：文档正文是 longtext，可达数 MB，
+   * 每次打开详情页都会因此产生一个百万级元素的临时数组（几十 MB 内存 + GC 抖动）。
+   * 这里只展开「前 length 个码点所需」的有限前缀；纯 BMP 文本（无代理对）直接 slice。
+   */
   private substr(str: string, length: number): string {
-    return Array.from(str).slice(0, length).join('');
+    if (!str) return '';
+    // 无增补平面字符时，码点数与 UTF-16 长度一致，直接 slice 结果完全相同
+    if (!/[\uD800-\uDFFF]/.test(str)) return str.slice(0, length);
+    // 含代理对：每个码点最多占 2 个 UTF-16 单元，取 length*2 个单元即可覆盖前 length 个码点
+    return Array.from(str.slice(0, length * 2)).slice(0, length).join('');
   }
 
   private genDocumentUUID(): string {

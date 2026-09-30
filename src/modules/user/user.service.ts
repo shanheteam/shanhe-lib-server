@@ -349,7 +349,7 @@ export class UserService {
     if (!admin) {
       throw Biz.unauthenticated('用户不存在');
     }
-    if (!checkPassword(body.password ?? '', admin.password)) {
+    if (!(await checkPassword(body.password ?? '', admin.password))) {
       throw Biz.invalidArgument('密码错误');
     }
 
@@ -399,7 +399,7 @@ export class UserService {
     const now = new Date();
     const saved = await this.userRepo.save(
       this.userRepo.create({
-        password: makePassword(password),
+        password: await makePassword(password),
         email,
         created_at: now,
         updated_at: now,
@@ -454,7 +454,7 @@ export class UserService {
 
     if (body.password) {
       await this.userRepo.update(targetId, {
-        password: makePassword(body.password),
+        password: await makePassword(body.password),
         updated_at: now,
       });
     }

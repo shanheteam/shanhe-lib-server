@@ -1,6 +1,7 @@
 import { Controller, Get, Ip, Logger, Param, Query, Res } from '@nestjs/common';
 import { SkipThrottle } from '@nestjs/throttler';
 import { Response } from 'express';
+import * as fs from 'fs';
 import * as path from 'path';
 import { AttachmentService } from './attachment.service';
 import { OssService, contentTypeOf } from './oss.service';
@@ -150,6 +151,12 @@ export class FileController {
   @Public()
   @Get('favicon.ico')
   favicon(@Res() res: Response) {
-    return res.sendFile(this.service.faviconPath());
+    const file = this.service.faviconPath();
+    // 文件缺失时返回 404：此前直接 sendFile 会抛 ENOENT，被异常过滤器转成 500
+    if (!fs.existsSync(file)) {
+      res.status(404).end();
+      return;
+    }
+    return res.sendFile(file);
   }
 }

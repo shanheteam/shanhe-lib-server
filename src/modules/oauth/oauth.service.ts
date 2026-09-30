@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { User, UserGroup, Group, UserOauth } from '../../entities';
@@ -56,6 +56,8 @@ interface UcStudentIdResult {
 
 @Injectable()
 export class OauthService {
+  private readonly logger = new Logger(OauthService.name);
+
   constructor(
     @InjectRepository(User)
     private readonly userRepo: Repository<User>,
@@ -261,11 +263,11 @@ export class OauthService {
     user?: Record<string, unknown>;
     oauth?: Record<string, unknown>;
   }> {
-    console.log('[OAuth] login body:', JSON.stringify(body));
+    this.logger.debug(`[OAuth] login body: ${JSON.stringify(body)}`);
     const code = body.code ?? '';
     const oauthType = Number(body.oauth_type) || 0;
     const codeVerifier = body.code_verifier ?? '';
-    console.log('[OAuth] codeVerifier present:', !!codeVerifier, 'len:', codeVerifier?.length);
+    this.logger.debug(`[OAuth] codeVerifier present: ${!!codeVerifier} len: ${codeVerifier?.length}`);
 
     if (!code) {
       throw Biz.invalidArgument('code不能为空');
@@ -316,13 +318,13 @@ export class OauthService {
 
     // Get user info from OAuth provider
     const userInfo = await this.getUserInfo(oauthType, access_token, openid);
-    console.log('[OAuth] userInfo from provider:', JSON.stringify(userInfo));
+    this.logger.debug(`[OAuth] userInfo from provider: ${JSON.stringify(userInfo)}`);
 
     const nickname = userInfo.nickname || userInfo.name || userInfo.login || userInfo.display_name || '';
     const avatar = userInfo.avatar || userInfo.avatar_url || userInfo.picture || '';
     const email = userInfo.email || '';
     const unionid = userInfo.unionid || '';
-    console.log('[OAuth] parsed - nickname:', nickname, 'email:', email, 'openid:', openid);
+    this.logger.debug(`[OAuth] parsed - nickname: ${nickname} email: ${email} openid: ${openid}`);
 
     return this.matchOrCreateUser({
       oauthType,
@@ -563,7 +565,7 @@ export class OauthService {
 
     // Create new user
     const now = new Date();
-    const randomPassword = makePassword(randomString(16));
+    const randomPassword = await makePassword(randomString(16));
     const randomEmail = email || `${openid}@oauth.local`;
 
     const newUser = await this.userRepo.save(
@@ -740,7 +742,7 @@ export class OauthService {
           (kid) => this.jwks.getPublicKey(kid),
           nonce,
         );
-        console.log(`[OIDC] id_token verified, sub=${String(claims.sub)}`);
+        this.logger.debug(`[OIDC] id_token verified, sub=${String(claims.sub)}`);
         return String(claims.sub || '');
       } catch (e: any) {
         throw Biz.internal(`[OIDC] ` + (e?.message || 'id_token 校验失败'));
@@ -813,7 +815,9 @@ export class OauthService {
       }
 
       const data = await response.json();
-      console.log('[OAuth] token response data keys:', Object.keys(data), 'data:', JSON.stringify(data));
+      this.logger.debug(
+        `[OAuth] token response data keys: ${Object.keys(data)} data: ${JSON.stringify(data)}`,
+      );
 
       // Try to extract openid from JWT payload (sub field)
       let openid = data.openid || data.sub || data.id || '';
@@ -823,7 +827,7 @@ export class OauthService {
           if (parts.length === 3) {
             const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString());
             openid = payload.sub || payload.id || '';
-            console.log('[OAuth] extracted openid from JWT payload:', openid);
+            this.logger.debug(`[OAuth] extracted openid from JWT payload: ${openid}`);
           }
         } catch (e) {
           console.error('[OAuth] failed to decode JWT:', e);

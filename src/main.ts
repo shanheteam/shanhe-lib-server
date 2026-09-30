@@ -1,6 +1,6 @@
 import { NestFactory } from '@nestjs/core';
 import { NestExpressApplication } from '@nestjs/platform-express';
-import { ValidationPipe } from '@nestjs/common';
+import { Logger, ValidationPipe } from '@nestjs/common';
 import * as path from 'path';
 import * as fs from 'fs';
 import { AppModule } from './app.module';
@@ -9,6 +9,12 @@ import { HttpStatusInterceptor } from './common/http-status.interceptor';
 import { env } from './config/env';
 
 async function bootstrap() {
+  // 生产环境收敛日志级别：Nest 默认含 debug/verbose，会让转换器逐条外部命令日志
+  // 等在生产持续落盘。仅在 production 下收敛，开发环境保持默认。
+  if (env.isProduction) {
+    Logger.overrideLogger(['log', 'warn', 'error', 'fatal']);
+  }
+
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
 
   // 部署在 CDN/Nginx 之后时需信任转发头，否则限流会把所有用户算作同一个 IP。

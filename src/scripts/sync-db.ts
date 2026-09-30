@@ -77,7 +77,7 @@ async function main() {
   if (userCount === 0) {
     log('初始化管理员账号 admin / mnt.ltd ...');
     const user = await userRepo.save({
-      password: makePassword('mnt.ltd'),
+      password: await makePassword('mnt.ltd'),
       mobile: '',
       email: 'admin@shanhe.local',
       address: '',

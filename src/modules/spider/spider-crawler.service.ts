@@ -214,7 +214,7 @@ export class SpiderCrawlerService {
     const $ = load(html, { baseURI: row.url });
     const seen = new Set<string>();
     const childUrls: string[] = [];
-    const docPromises: Array<Promise<void>> = [];
+    const docLinks: Array<{ url: string; title: string; ext: string }> = [];
 
     $('a[href]').each((_, el) => {
       const href = $(el).attr('href') ?? '';
@@ -232,19 +232,20 @@ export class SpiderCrawlerService {
 
       const ext = documentExtOf(abs);
       if (ext) {
-        docPromises.push(this.upsertSpiderDocument(abs, $(el).text().trim(), ext));
+        docLinks.push({ url: abs, title: $(el).text().trim(), ext });
       } else if (row.level < 5) {
         childUrls.push(abs);
       }
     });
 
-    await Promise.all(docPromises);
-    row.total = docPromises.length;
+    await this.upsertSpiderDocuments(docLinks);
+    row.total = docLinks.length;
 
     // 登记下一层页面链接
     if (childUrls.length) {
-      const exist = await this.urlRepo.find({ select: { url: true } });
-      const existSet = new Set(exist.map((x) => x.url));
+      // 原先这里 `find({ select: { url: true } })` 会把整张 spider_url 读进内存：
+      // 种子页会递归嗅探 20 个子页，一次触发即 21 次全表读。只查本次候选结果完全相同。
+      const existSet = await this.existingUrlSet(childUrls);
       const rows = childUrls
         .filter((u) => !existSet.has(u))
         .slice(0, 200)
@@ -268,30 +269,70 @@ export class SpiderCrawlerService {
     }
   }
 
-  private async upsertSpiderDocument(absUrl: string, anchorText: string, ext: string): Promise<void> {
-    const exists = await this.docRepo.findOne({ where: { url: absUrl }, select: { id: true } });
-    if (exists) return;
-    const entity = this.docRepo.create({
-      url: absUrl,
-      status: TASK_STATUS.WAIT,
-      language: '',
-      title: '',
-      title_from_href: anchorText.slice(0, 500),
-      title_from_url: (titleFromUrl(absUrl) || anchorText).slice(0, 500),
-      title_from_attachment: '',
-      price: 0,
-      size: 0,
-      ext,
-      content_type: '',
-      save_path: '',
-      user_id: 0,
-      category_id: '',
-      document_id: 0,
-      error: '',
-      created_at: new Date(),
-      updated_at: new Date(),
-    });
-    await this.docRepo.save(entity);
+  /**
+   * 分批查询候选 url 中「已存在」的集合。
+   * 原实现用 `urlRepo.find({ select: { url: true } })` 把整张 spider_url 表读进内存做去重，
+   * 每次嗅探页面都是一次全表扫描。只查本次候选，判断结果与原实现完全一致。
+   */
+  private async existingUrlSet(urls: string[]): Promise<Set<string>> {
+    const unique = [...new Set(urls)];
+    const found = new Set<string>();
+    const CHUNK = 500;
+    for (let i = 0; i < unique.length; i += CHUNK) {
+      const rows = await this.urlRepo.find({
+        select: { url: true },
+        where: { url: In(unique.slice(i, i + CHUNK)) },
+      });
+      for (const r of rows) found.add(String(r.url));
+    }
+    return found;
+  }
+
+  /**
+   * 批量写入待采集文档。
+   * 原实现对每个链接单独 `findOne({ where: { url } })`，而 spider_document.url 没有索引
+   * （实体上只索引了 status / document_id），一个列表页 200 个附件链接就是 200 次全表扫描。
+   * 改为「一次批量查询已存在 + 一次批量插入」，写入结果与逐条插入相同。
+   */
+  private async upsertSpiderDocuments(
+    links: Array<{ url: string; title: string; ext: string }>,
+  ): Promise<void> {
+    if (!links.length) return;
+    const unique = [...new Set(links.map((l) => l.url))];
+    const existSet = new Set<string>();
+    const CHUNK = 500;
+    for (let i = 0; i < unique.length; i += CHUNK) {
+      const rows = await this.docRepo.find({
+        select: { url: true },
+        where: { url: In(unique.slice(i, i + CHUNK)) },
+      });
+      for (const r of rows) existSet.add(String(r.url));
+    }
+    const entities = links
+      .filter((l) => !existSet.has(l.url))
+      .map((l) =>
+        this.docRepo.create({
+          url: l.url,
+          status: TASK_STATUS.WAIT,
+          language: '',
+          title: '',
+          title_from_href: l.title.slice(0, 500),
+          title_from_url: (titleFromUrl(l.url) || l.title).slice(0, 500),
+          title_from_attachment: '',
+          price: 0,
+          size: 0,
+          ext: l.ext,
+          content_type: '',
+          save_path: '',
+          user_id: 0,
+          category_id: '',
+          document_id: 0,
+          error: '',
+          created_at: new Date(),
+          updated_at: new Date(),
+        }),
+      );
+    if (entities.length) await this.docRepo.save(entities);
   }
 
   // ---------- 文章列表嗅探 ----------

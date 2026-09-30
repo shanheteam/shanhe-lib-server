@@ -35,7 +35,8 @@ export class SpiderArticleService {
     );
     if (!urls.length) throw Biz.invalidArgument('列表页链接不能为空');
 
-    const exist = await this.sourceRepo.find({ select: { url: true } });
+    // 只查本次候选（urls 已去重）：原实现 find({select:{url:true}}) 会把整张表读进内存
+    const exist = await this.sourceRepo.find({ select: { url: true }, where: { url: In(urls) } });
     const existSet = new Set(exist.map((x) => x.url));
     const now = new Date();
     const entities = urls
