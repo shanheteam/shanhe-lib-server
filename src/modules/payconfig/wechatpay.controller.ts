@@ -36,7 +36,13 @@ export class WechatpayController {
       throw Biz.invalidArgument('APIv3密钥应为32位字符');
     }
 
-    const host = conf.enableSandbox ? 'api.mch.weixin.qq.com' : 'api.mch.weixin.qq.com';
+    // 微信支付 APIv3 没有独立沙箱域名（v2 时代的沙箱是在同一域名下走 /sandboxnew 路径），
+    // 因此这里恒为正式域名。原代码写成
+    //   conf.enableSandbox ? 'api.mch.weixin.qq.com' : 'api.mch.weixin.qq.com'
+    // —— 两个分支字面量相同，三元恒等于正式域名，会让人误以为「开了沙箱开关就是在测沙箱」。
+    // 现改为常量并显式说明：后台的 enable_sandbox 开关仅作记录，不影响请求目标；
+    // 如需联调请使用真实小额交易或微信支付提供的验收测试账号。
+    const host = 'api.mch.weixin.qq.com';
     const path = '/v3/certificates';
     const timestamp = Math.floor(Date.now() / 1000).toString();
     const nonce = crypto.randomUUID().replace(/-/g, '');
