@@ -251,7 +251,14 @@ export class AttachmentService {
     return !!row;
   }
 
-  /** 根据 HTTP method + path 校验上传权限（与原版 CheckPermissionByUserId 对齐）。 */
+  /**
+   * 根据 HTTP method + path 校验上传权限。
+   *
+   * 安全说明：原先权限记录不存在时 `return true`（fail-open）——权限表被清空、初始化不完整
+   * 或新增上传接口忘记补种子权限时，所有图片上传接口会静默全开放，与全局 AuthGuard
+   * 「默认拒绝」的策略相反。现改为 fail-closed。
+   * 5 个上传接口对应的权限项均已存在于种子数据（/api/v1/upload/{avatar,config,banner,category,article}）。
+   */
   async checkUploadPermission(userId: number, httpPath: string): Promise<boolean> {
     if (userId <= 0) return false;
     if (userId === 1) return true;
@@ -259,7 +266,7 @@ export class AttachmentService {
     const permission = await this.permissionRepo.findOne({
       where: { method: 'POST', path: httpPath },
     });
-    if (!permission) return true;
+    if (!permission) return false;
 
     const ugs = await this.userGroupRepo.find({ where: { user_id: userId } });
     const groupIds = ugs.map((ug) => ug.group_id).filter((id) => id > 0);

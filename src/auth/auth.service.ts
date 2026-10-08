@@ -23,14 +23,21 @@ export class AuthService {
     });
   }
 
-  /** 校验 token，返回用户标识；无效则返回 undefined */
+  /** 校验登录 token，返回用户标识；无效则返回 undefined */
   verifyToken(token: string): JwtUser | undefined {
     try {
       const payload = this.jwtService.verify<JwtUser & { iat: number; iss: string }>(token, {
         secret: env.jwt.secret,
       });
+      // 只接受本系统签发的**登录** token，防止其它用途的 token 被当作登录凭证：
+      //  · iss 必须为 'moredoc'（下载 token 的载荷只有 ip，没有 iss）
+      //  · userId 必须是正整数。下载 token 解出的 userId 是 NaN，而 NaN 为真值，
+      //    能绕过 `if (!request.user)` 与 `userId <= 0` 之类的防御。
+      if (payload.iss !== 'moredoc') return undefined;
+      const userId = Number(payload.userId);
+      if (!Number.isInteger(userId) || userId <= 0) return undefined;
       return {
-        userId: Number(payload.userId),
+        userId,
         uuid: payload.uuid,
         exp: payload.exp,
       };

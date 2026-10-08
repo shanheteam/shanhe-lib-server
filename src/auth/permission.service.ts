@@ -72,20 +72,13 @@ export class PermissionService {
     return !!gp;
   }
 
-  /** 是否为管理员（拥有任意 group_permission 记录，或 ID==1） */
-  async isAdmin(userId: number): Promise<boolean> {
-    if (userId <= 0) return false;
-    if (userId === ROOT_USER_ID) return true;
-
-    const gp = await this.groupPermissionRepo
-      .createQueryBuilder('gp')
-      .innerJoin(UserGroup, 'ug', 'ug.group_id = gp.group_id')
-      .where('ug.user_id = :userId', { userId })
-      .andWhere('ug.group_id > 0')
-      .getOne();
-
-    return !!gp;
-  }
+  // 说明：此处原有 isAdmin(userId)（判定「是否拥有任意一条 group_permission」）。
+  // 它曾被当作「管理员」用于删除他人内容、修改他人资料、读取全站用户 PII 等授权判断，
+  // 导致任何被授过哪怕一项权限（例如种子里面向普通用户的 /api/v1/upload/avatar）的用户
+  // 即获得上述全部能力，属越权漏洞。现已全部改为按操作调用具体权限的 check()，
+  // 该函数已无调用方并删除，以免再次被误用为授权判断。
+  // 若将来确实需要「是否为后台管理员」的展示性判断，请新增一个语义明确的
+  // hasAnyManagementPermission() 并仅用于 UI，不得用于授权。
 
   /**
    * 返回用户当前拥有的 GRPC 权限 path 集合。

@@ -37,6 +37,9 @@ export class GroupController {
     return this.groupService.deleteGroup(ids);
   }
 
+  // 与同文件 /group/permission 等接口一致，补上种子中已定义的 ListGroup 权限。
+  // 此前缺失，任意登录用户即可枚举全部用户组配置（enable_upload / enable_article / user_count 等）。
+  @RequirePermission('/api.v1.GroupAPI/ListGroup')
   @Get()
   get(@Query('id') id?: string, @Query('title') title?: string) {
     return this.groupService.getGroup(
@@ -45,6 +48,7 @@ export class GroupController {
     );
   }
 
+  @RequirePermission('/api.v1.GroupAPI/ListGroup')
   @Get('list')
   list(
     @Query('wd') wd?: string,

@@ -146,8 +146,10 @@ export class CategoryService {
   ): Promise<{ total: number; category: Category[] }> {
     const page = Math.max(1, Number(query.page) || 1);
     const size = Number(query.size) || 10;
-    const isAdmin = user
-      ? await this.permissionService.isAdmin(user.userId)
+    // 查看「已禁用」分类、按标题搜索需 ListCategory 权限。
+    // 此前用 isAdmin()（＝拥有任意一条 group_permission），判定过宽。
+    const canListAll = user
+      ? await this.permissionService.check(user.userId, '/api/v1.CategoryAPI/ListCategory')
       : false;
 
     const where: Record<string, any> = {};
@@ -158,11 +160,11 @@ export class CategoryService {
     const parentIds = toNumberArray(query.parent_id);
     if (parentIds.length) where.parent_id = In(parentIds);
 
-    if (isAdmin && query.wd) where.title = Like(`%${query.wd}%`);
+    if (canListAll && query.wd) where.title = Like(`%${query.wd}%`);
 
     const enables = toBoolArray(query.enable);
     if (enables.length) where.enable = In(enables);
-    else if (!isAdmin) where.enable = true;
+    else if (!canListAll) where.enable = true;
 
     const [rows, total] = await this.repo.findAndCount({
       where,

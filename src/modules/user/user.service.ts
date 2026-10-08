@@ -274,19 +274,29 @@ export class UserService {
     }
 
     const groupIds = await getUserGroupIds(this.userGroupRepo, id);
-    const isAdmin = user ? await this.permissionService.isAdmin(user.userId) : false;
+    // 返回「全字段」（含 email/mobile/student_id/register_ip/last_login_ip）需 GetUser 权限。
+    // 此前用 isAdmin()（＝拥有任意一条 group_permission），导致只被授过「上传头像」这类
+    // 普通权限的用户即可读取全站用户 PII。本人查看自己的资料不受影响。
+    const canViewFullProfile = user
+      ? await this.permissionService.check(user.userId, '/api/v1.UserAPI/GetUser')
+      : false;
     const isSelf = user ? user.userId === id : false;
 
-    return isAdmin || isSelf
+    return canViewFullProfile || isSelf
       ? buildUserJson(target, groupIds)
       : this.buildPublicUserJson(target, groupIds);
   }
 
 
   async updateUserProfile(body: ProfileBody, user: JwtUser): Promise<Record<string, never>> {
-    const isAdmin = await this.permissionService.isAdmin(user.userId);
+    // 修改「他人」资料需 UpdateUserProfile 权限；本人始终可改自己的。
+    // 此前用 isAdmin()，使被授过任意一项权限的用户即可篡改任意用户资料。
+    const canUpdateOthers = await this.permissionService.check(
+      user.userId,
+      '/api/v1.UserAPI/UpdateUserProfile',
+    );
     let targetId = Number(body.id) || user.userId;
-    if (!isAdmin && targetId !== user.userId) {
+    if (!canUpdateOthers && targetId !== user.userId) {
       throw Biz.permissionDenied('您没有权限更改他人信息');
     }
     if (targetId <= 0) targetId = user.userId;
@@ -297,8 +307,9 @@ export class UserService {
       const value = (body as any)[field];
       if (value !== undefined) (patch as any)[field] = value;
     }
-    // 敏感字段（身份证 identity / 学号 student_id）仅管理员可改，普通用户即使提交也会被忽略
-    if (isAdmin) {
+    // 敏感字段（身份证 identity / 学号 student_id / 备注 remark）需 UpdateUserProfile 权限，
+    // 普通用户即使提交也会被忽略
+    if (canUpdateOthers) {
       const sensitive = ['identity', 'student_id'] as const;
       for (const f of sensitive) {
         const v = (body as any)[f];

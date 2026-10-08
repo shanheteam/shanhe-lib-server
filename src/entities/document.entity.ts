@@ -43,6 +43,9 @@ export class Document {
   @Column({ type: 'int', default: 0 })
   favorite_count: number;
 
+  // 前端公开排序选项（views/category/_id.vue 的「评论最多」→ ?order=comment_count desc）；
+  // 无索引时该排序会全表扫描 + filesort，且 getManyAndCount 会再扫一遍
+  @Index('idx_comment_count')
   @Column({ type: 'int', default: 0 })
   comment_count: number;
 
@@ -63,6 +66,10 @@ export class Document {
   @Column({ type: 'varchar', length: 16, default: '' })
   ext: string;
 
+  // 复合索引：转换 worker 的「按 status 取 id 最小的一条」查询依赖它直接定位有序首行。
+  // 仅有单列 status 索引时，`status IN (0,5) ORDER BY id LIMIT 1` 在队列为空时会退化为
+  // 沿主键逐行过滤（每 5 秒一次全表级扫描）。(status, id) 也可作为 status 等值查询的前缀索引。
+  @Index('idx_status_id', ['status', 'id'])
   @Index('status')
   @Column({ type: 'smallint', default: 0 })
   status: number;

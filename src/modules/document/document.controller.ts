@@ -33,9 +33,15 @@ export class DocumentController {
     return user?.userId ?? 0;
   }
 
-  private async isAdmin(user?: JwtUser): Promise<boolean> {
-    if (!user || user.userId <= 0) return false;
-    return this.permissionService.isAdmin(user.userId);
+  /**
+   * 是否拥有指定权限（root 恒 true）。
+   * 替代原先语义过宽的 isAdmin()（＝拥有任意一条 group_permission）——那会让
+   * 只被授过「上传头像」这类普通权限的用户获得删任意文档、改任意文档状态的权力。
+   */
+  private async can(user: JwtUser | undefined, grpcPath: string): Promise<boolean> {
+    const userId = this.userIdOf(user);
+    if (userId <= 0) return false;
+    return this.permissionService.check(userId, grpcPath);
   }
 
   // ---------- 公开查询 ----------
@@ -55,7 +61,7 @@ export class DocumentController {
     return this.service.listDocument(
       query,
       this.userIdOf(user),
-      await this.isAdmin(user),
+      await this.can(user, '/api.v1.DocumentAPI/ListDocument'),
     );
   }
 
@@ -80,7 +86,7 @@ export class DocumentController {
     return this.service.getDocumentDetail(
       query,
       this.userIdOf(user),
-      await this.isAdmin(user),
+      await this.can(user, '/api.v1.DocumentAPI/GetDocument'),
     );
   }
 
@@ -108,7 +114,7 @@ export class DocumentController {
   ) {
     await this.service.updateDocument(
       this.userIdOf(user),
-      await this.isAdmin(user),
+      await this.can(user, '/api.v1.DocumentAPI/UpdateDocument'),
       body,
     );
     return {};
@@ -119,7 +125,7 @@ export class DocumentController {
   async remove(@Query('id') id: unknown, @CurrentUser() user: JwtUser) {
     await this.service.deleteDocument(
       this.userIdOf(user),
-      await this.isAdmin(user),
+      await this.can(user, '/api.v1.DocumentAPI/DeleteDocument'),
       positiveNumberArray(id),
     );
     return {};

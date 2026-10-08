@@ -4,7 +4,6 @@ import { In, Repository } from 'typeorm';
 import { UserVip, User } from '../../entities';
 import { Biz } from '../../common/biz.exception';
 import {
-  defined,
   normalizePageSize,
   toInt,
   toNumberArray,
@@ -50,8 +49,11 @@ export class UserVipService {
   async update(data: any): Promise<void> {
     const id = toInt(data.id, 0);
     if (id <= 0) throw Biz.invalidArgument('参数不正确');
-    const partial = defined(data, [
-      'id',
+    // 只接受下列可写字段。此处原先把这份「白名单」直接传给了 defined() 的第二个参数，
+    // 而该参数语义是「**排除**列表」（见 common/query.util.ts）—— 结果列出的字段全被丢弃，
+    // PUT /api/v1/uservip 实际改不动任何 VIP 权益与有效期，反而让 created_at 等
+    // 未列出的字段可被客户端写入。改为显式挑字段。
+    const EDITABLE_FIELDS = [
       'user_id',
       'type',
       'discount',
@@ -61,7 +63,11 @@ export class UserVipService {
       'joined_at',
       'expired_at',
       'order_no',
-    ]);
+    ] as const;
+    const partial: Record<string, any> = {};
+    for (const field of EDITABLE_FIELDS) {
+      if (data[field] !== undefined) partial[field] = data[field];
+    }
     if (partial.joined_at !== undefined) {
       partial.joined_at = partial.joined_at ? new Date(partial.joined_at as string) : null;
     }

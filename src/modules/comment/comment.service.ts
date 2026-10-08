@@ -149,13 +149,16 @@ export class CommentService {
     );
   }
 
-  /** 删除评论：管理员删除任意评论；普通用户仅能删除自己的评论。 */
-  async deleteComment(ids: number[], userId: number, isAdmin: boolean): Promise<void> {
+  /**
+   * 删除评论：拥有 DeleteComment 权限者可删除任意评论；否则仅能删除自己的评论。
+   * canDeleteAny 由 controller 依据具体权限判定（勿再传「是否为管理员」）。
+   */
+  async deleteComment(ids: number[], userId: number, canDeleteAny: boolean): Promise<void> {
     if (!ids.length) return;
     const qb = this.commentRepo
       .createQueryBuilder('c')
       .where('c.id IN (:...ids)', { ids });
-    if (!isAdmin) qb.andWhere('c.user_id = :userId', { userId });
+    if (!canDeleteAny) qb.andWhere('c.user_id = :userId', { userId });
 
     const comments = await qb.getMany();
     if (!comments.length) throw Biz.notFound('评论不存在或没有权限删除');
@@ -195,7 +198,7 @@ export class CommentService {
   async listComment(
     query: Record<string, any>,
     userId: number,
-    isAdmin: boolean,
+    canListAll: boolean,
   ): Promise<{ total: number; comment: Record<string, unknown>[] }> {
     const documentId = Number(query.document_id) || 0;
     let page = Number(query.page) || 1;
@@ -210,9 +213,9 @@ export class CommentService {
 
     const qb = this.commentRepo.createQueryBuilder('c');
 
-    // 默认只返回已审核评论；管理员或查看自己列表时可放宽
+    // 默认只返回已审核评论；拥有 ListComment 权限、或查看自己的列表时可放宽
     const selfQuery = userId > 0 && Number(query.user_id) === userId;
-    if (isAdmin || selfQuery) {
+    if (canListAll || selfQuery) {
       const statuses = toNumberArray(query.status);
       qb.where('c.status IN (:...status)', { status: statuses.length ? statuses : [0, 1, 2] });
     } else {
@@ -227,7 +230,7 @@ export class CommentService {
     const parentIds = toNumberArray(query.parent_id);
     if (parentIds.length) qb.andWhere('c.parent_id IN (:...parentIds)', { parentIds });
 
-    if (isAdmin && String(query.wd ?? '').trim()) {
+    if (canListAll && String(query.wd ?? '').trim()) {
       qb.andWhere('c.content LIKE :wd', { wd: `%${String(query.wd).trim()}%` });
     }
 

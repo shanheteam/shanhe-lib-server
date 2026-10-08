@@ -50,8 +50,15 @@ export class CommentController {
   @Delete()
   async remove(@Query('id') id: unknown, @CurrentUser() user: JwtUser) {
     const userId = user?.userId ?? 0;
-    const isAdmin = await this.permissionService.isAdmin(userId);
-    await this.service.deleteComment(positiveNumberArray(id), userId, isAdmin);
+    // 能否删除「他人」评论，取决于是否拥有 DeleteComment 权限（root 恒有）。
+    // 此前用 permissionService.isAdmin()（=拥有任意一条 group_permission），
+    // 导致被授过任意一项权限（如普通用户的「上传头像」）的用户即可删除全站评论。
+    // 无该权限时仍可删除自己的评论（由 service 内的 user_id 归属过滤保证）。
+    const canDeleteAny = await this.permissionService.check(
+      userId,
+      '/api.v1.CommentAPI/DeleteComment',
+    );
+    await this.service.deleteComment(positiveNumberArray(id), userId, canDeleteAny);
     return {};
   }
 
@@ -75,7 +82,11 @@ export class CommentController {
     @CurrentUser() user?: JwtUser,
   ) {
     const userId = user?.userId ?? 0;
-    const isAdmin = userId > 0 ? await this.permissionService.isAdmin(userId) : false;
-    return this.service.listComment(query, userId, isAdmin);
+    // 查看未审核评论、按正文搜索需 ListComment 权限；此前用 isAdmin() 判定过宽
+    const canListAll =
+      userId > 0
+        ? await this.permissionService.check(userId, '/api.v1.CommentAPI/ListComment')
+        : false;
+    return this.service.listComment(query, userId, canListAll);
   }
 }

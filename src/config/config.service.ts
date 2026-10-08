@@ -70,11 +70,20 @@ export class ConfigService implements OnModuleInit {
   }
 
   /**
-   * 下载 token 密钥。优先使用后台配置，未配置或仍是历史弱默认值 `moredoc`
-   * 时回退到 JWT 密钥，避免公开密钥可被伪造下载链接。
+   * 下载 token 密钥。
+   *
+   * ⚠️ 安全说明：此前未配置或仍是历史弱默认值 `moredoc` 时**回退到 JWT 登录密钥**，
+   * 导致两种 token 同密钥。而下载 token 的载荷只有一个 `ip`（没有 userId，见
+   * document.service.ts 的签发处），登录校验又只验签名不看载荷结构 ——
+   * 于是拿到任意一个下载链接的人，就能把该 token 当登录凭证使用，且 userId 被解成 NaN
+   * （NaN 是真值，会让 `if (!request.user)`、`userId <= 0` 这类判断失效）。
+   *
+   * 现改为回退到「JWT 密钥 + 固定命名空间后缀」，两个密钥空间互不相通：
+   * 下载 token 无法通过登录校验，登录 token 也无法用来伪造下载链接。
+   * 仍建议在后台显式配置一个独立的随机密钥（download.secret_key）。
    */
   getDownloadSecret(): string {
     const v = this.get('download', 'secret_key', '').trim();
-    return !v || v === 'moredoc' ? env.jwt.secret : v;
+    return !v || v === 'moredoc' ? `${env.jwt.secret}:download-token` : v;
   }
 }

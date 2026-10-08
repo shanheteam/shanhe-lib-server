@@ -26,6 +26,7 @@ import { ConverterService } from '../converter/converter.service';
 import { OssService, contentTypeOf } from '../attachment/oss.service';
 import { Biz } from '../../common/biz.exception';
 import { asArray, positiveNumberArray, toBoolArray } from '../../common/query.util';
+import { sanitizeHttpUrl } from '../../common/url.util';
 import { tb } from '../../database/naming-strategy';
 
 export const DocumentStatus = {
@@ -360,7 +361,13 @@ export class DocumentService implements OnModuleInit {
       categories.forEach((c) => cateMap.set(Number(c.id), c));
     }
 
-    const attachments = await this.attachmentRepo.find({ where: { type: AttachmentTypeDocument, type_id: In(docIds) } });
+    // order 使结果按主键升序，配合下方「后者覆盖前者」的 Map 写入即恒取 id 最大的附件；
+    // 此前无 order，取到哪一条取决于存储引擎返回顺序。详情页原先另发一次
+    // `order: { id: 'DESC' }` 的查询取同一语义，现改为复用本结果。
+    const attachments = await this.attachmentRepo.find({
+      where: { type: AttachmentTypeDocument, type_id: In(docIds) },
+      order: { id: 'ASC' },
+    });
     const hashMap = new Map<number, string>();
     attachments.forEach((a) => hashMap.set(Number(a.type_id), a.hash));
 
@@ -470,7 +477,7 @@ export class DocumentService implements OnModuleInit {
           uuid: this.genDocumentUUID(),
           language: String(it.language ?? ''),
           source: String(it.source ?? ''),
-          source_url: String(it.source_url ?? ''),
+          source_url: sanitizeHttpUrl(it.source_url),
           preview_ext: '.webp',
           created_at: new Date(),
           updated_at: new Date(),
@@ -537,12 +544,12 @@ export class DocumentService implements OnModuleInit {
     }
   }
 
-  async updateDocument(userId: number, isAdminFlag: boolean, body: any): Promise<void> {
+  async updateDocument(userId: number, canManage: boolean, body: any): Promise<void> {
     const id = Number(body.id);
     if (!id) throw Biz.invalidArgument('文档ID不能为空');
     const exist = await this.docRepo.findOne({ where: { id } });
     if (!exist) throw Biz.notFound('文档不存在');
-    if (!isAdminFlag && Number(exist.user_id) !== userId) {
+    if (!canManage && Number(exist.user_id) !== userId) {
       throw Biz.permissionDenied('文档不存在或没有权限');
     }
 
@@ -553,10 +560,10 @@ export class DocumentService implements OnModuleInit {
       price: body.price !== undefined ? Number(body.price) : exist.price,
       language: String(body.language ?? exist.language),
       source: String(body.source ?? exist.source),
-      source_url: String(body.source_url ?? exist.source_url),
+      source_url: sanitizeHttpUrl(body.source_url ?? exist.source_url),
       updated_at: new Date(),
     };
-    if (isAdminFlag && body.status !== undefined) {
+    if (canManage && body.status !== undefined) {
       fields.status = Number(body.status);
     }
 
@@ -577,10 +584,10 @@ export class DocumentService implements OnModuleInit {
     }
   }
 
-  async deleteDocument(userId: number, isAdminFlag: boolean, ids: number[]): Promise<void> {
+  async deleteDocument(userId: number, canDeleteAny: boolean, ids: number[]): Promise<void> {
     if (ids.length === 0) return;
     let targetIds = ids;
-    if (!isAdminFlag) {
+    if (!canDeleteAny) {
       const docs = await this.docRepo.find({ where: { id: In(ids), user_id: userId }, select: { id: true } } as any);
       targetIds = docs.map((d) => Number(d.id));
       if (targetIds.length === 0) throw Biz.permissionDenied('文档不存在或没有删除权限');
@@ -643,7 +650,7 @@ export class DocumentService implements OnModuleInit {
 
   // ================== 列表 / 搜索 / 首页 ==================
 
-  async listDocument(params: any, userId: number, isAdminFlag: boolean): Promise<Record<string, any>> {
+  async listDocument(params: any, userId: number, canListAll: boolean): Promise<Record<string, any>> {
     let page = Number(params.page) || 1;
     let size = Number(params.size) || 24;
     const limit = Number(params.limit) || 0;
@@ -665,7 +672,7 @@ export class DocumentService implements OnModuleInit {
     const queryOwn = requestUserIds.length === 1 && requestUserIds[0] === userId;
 
     let statuses: number[] = [];
-    if (isAdminFlag || queryOwn) {
+    if (canListAll || queryOwn) {
       statuses = requestStatuses;
     } else {
       const allowed: number[] = [DocumentStatus.Pending, DocumentStatus.Converting, DocumentStatus.Converted, DocumentStatus.Failed];
@@ -697,7 +704,7 @@ export class DocumentService implements OnModuleInit {
     const list = await this.enrichDocuments(docs, {
       withCategories: true,
       userId,
-      maskCounts: !isAdminFlag,
+      maskCounts: !canListAll,
     });
     return { total, document: list };
   }
@@ -790,7 +797,7 @@ export class DocumentService implements OnModuleInit {
     return res;
   }
 
-  async getDocumentDetail(params: any, userId: number, isAdminFlag: boolean): Promise<Record<string, any>> {
+  async getDocumentDetail(params: any, userId: number, canViewAll: boolean): Promise<Record<string, any>> {
     const rawId = Number(params.id);
     const idOrUuid: number | string = rawId > 0 ? rawId : String(params.uuid || '');
     if (idOrUuid === '' || (typeof idOrUuid === 'number' && idOrUuid <= 0)) {
@@ -805,7 +812,7 @@ export class DocumentService implements OnModuleInit {
       (Number(doc.status) === DocumentStatus.ReviewReject ||
         Number(doc.status) === DocumentStatus.PendingReview ||
         Number(doc.status) === DocumentStatus.Disabled) &&
-      !(isOwner || isAdminFlag)
+      !(isOwner || canViewAll)
     ) {
       throw Biz.notFound('文档不存在');
     }
@@ -819,17 +826,16 @@ export class DocumentService implements OnModuleInit {
     const enriched = await this.enrichDocuments([doc], {
       withCategories: true,
       userId,
-      maskCounts: !isAdminFlag,
+      maskCounts: !canViewAll,
     });
     const item = enriched[0];
 
-    const attachment = await this.attachmentRepo.findOne({
-      where: { type: AttachmentTypeDocument, type_id: Number(doc.id) },
-      order: { id: 'DESC' },
-    } as any);
+    // 复用 enrichDocuments 已查出的附件（其内部已按 id 升序取最后一个，等价于原先此处
+    // `order: { id: 'DESC' }` 取最新一条），省掉详情页每次多出的一条查询
+    const attachmentHash = (item.attachment as { hash?: string } | null)?.hash || '';
     let content = '';
-    if (attachment) {
-      const ac = await this.attachmentContentRepo.findOne({ where: { hash: attachment.hash } });
+    if (attachmentHash) {
+      const ac = await this.attachmentContentRepo.findOne({ where: { hash: attachmentHash } });
       content = ac?.content || '';
     }
     if (!String(item.description || '').trim() && content) {
@@ -838,7 +844,19 @@ export class DocumentService implements OnModuleInit {
     item.content = params.with_all_content ? content : this.substr(content, 2048 * 4);
 
     if (withAuthor) {
-      const user = await this.userRepo.findOne({ where: { id: uid } });
+      // 只取用到的列：此前取整行会把 password 哈希、address、signature、remark 等一并载入
+      const user = await this.userRepo.findOne({
+        where: { id: uid },
+        select: {
+          id: true,
+          avatar: true,
+          realname: true,
+          identity: true,
+          doc_count: true,
+          article_count: true,
+          credit_count: true,
+        },
+      });
       item.user = user
         ? {
             id: Number(user.id),
@@ -1320,7 +1338,13 @@ export class DocumentService implements OnModuleInit {
   private async attachmentHashMap(docIds: number[]): Promise<Map<number, string>> {
     const map = new Map<number, string>();
     if (docIds.length === 0) return map;
-    const attachments = await this.attachmentRepo.find({ where: { type: AttachmentTypeDocument, type_id: In(docIds) } });
+    // order 使结果按主键升序，配合下方「后者覆盖前者」的 Map 写入即恒取 id 最大的附件；
+    // 此前无 order，取到哪一条取决于存储引擎返回顺序。详情页原先另发一次
+    // `order: { id: 'DESC' }` 的查询取同一语义，现改为复用本结果。
+    const attachments = await this.attachmentRepo.find({
+      where: { type: AttachmentTypeDocument, type_id: In(docIds) },
+      order: { id: 'ASC' },
+    });
     attachments.forEach((a) => map.set(Number(a.type_id), a.hash));
     return map;
   }
@@ -1399,10 +1423,32 @@ export class DocumentService implements OnModuleInit {
   }
 
   private async convertNextDocument(): Promise<boolean> {
-    const doc = await this.docRepo.findOne({
-      where: { status: In([DocumentStatus.Pending, DocumentStatus.RePending]) },
-      order: { id: 'ASC' },
-    });
+    // 原先写作 `status IN (0,5) ORDER BY id ASC LIMIT 1`：队列为空时 MySQL 常常选择
+    // 沿主键顺序扫描并逐行过滤 status（避免 filesort），退化为全表级扫描，而它每 5 秒跑一次。
+    // 现拆成两次「单一 status + ORDER BY id」的查询，各自都能用 idx_status_id 直接取有序首行，
+    // 再取两者中 id 较小者 —— 与原语义（全局最早的一条）完全一致。
+    //
+    // 刻意**不**给这条路径加退避：转换是上传后用户可见的流程，
+    // 若照搬存量迁移那套最长 5 分钟的退避，用户上传后要等数分钟才会开始转换。
+    const [pending, rePending] = await Promise.all([
+      this.docRepo.findOne({
+        where: { status: DocumentStatus.Pending },
+        order: { id: 'ASC' },
+        select: { id: true },
+      }),
+      this.docRepo.findOne({
+        where: { status: DocumentStatus.RePending },
+        order: { id: 'ASC' },
+        select: { id: true },
+      }),
+    ]);
+
+    const candidates = [pending?.id, rePending?.id]
+      .map((v) => Number(v))
+      .filter((v) => Number.isFinite(v) && v > 0);
+    if (candidates.length === 0) return false;
+
+    const doc = await this.docRepo.findOne({ where: { id: Math.min(...candidates) } });
     if (!doc) return false;
     await this.handleDocument(doc);
     return true;

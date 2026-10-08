@@ -17,6 +17,7 @@ import { PermissionService } from '../../auth/permission.service';
 import { JwtUser } from '../../auth/jwt-user.type';
 import { tb } from '../../database/naming-strategy';
 import { toNumberArray, toBoolArray, uniqueNumberArray } from '../../common/query.util';
+import { sanitizeHttpUrl } from '../../common/url.util';
 
 const ARTICLE_STATUS_PENDING = 0;
 const ARTICLE_STATUS_PASS = 1;
@@ -95,15 +96,26 @@ export class ArticleService {
 
   async create(input: Record<string, any>, user: JwtUser): Promise<any> {
     const userId = user.userId;
-    const isAdmin = await this.permissionService.isAdmin(userId);
-    if (!isAdmin && !(await this.canPublishArticle(userId))) {
+    // 用具体权限替代 isAdmin()（原实现＝拥有任意一条 group_permission，判定过宽，
+    // 导致被授过任意一项权限的用户即可自审批直发、设推荐与全站公告）：
+    //   canCheck     = ArticleAPI/CheckArticles     内容审核：自审批直发、查看/列出未通过文章
+    //   canRecommend = ArticleAPI/RecommendArticles 运营推广：推荐、设为全站公告
+    const canCheck = await this.permissionService.check(
+      userId,
+      '/api.v1.ArticleAPI/CheckArticles',
+    );
+    const canRecommend = await this.permissionService.check(
+      userId,
+      '/api.v1.ArticleAPI/RecommendArticles',
+    );
+    if (!canCheck && !(await this.canPublishArticle(userId))) {
       throw Biz.permissionDenied('您没有权限发布文章');
     }
 
     const categoryIds = uniqueNumberArray(toNumberArray(input.category_id));
 
     let identifier = typeof input.identifier === 'string' ? input.identifier : '';
-    if (!isAdmin) identifier = '';
+    if (!canCheck) identifier = '';
     if (!identifier) identifier = genArticleIdentifier();
 
     const exist = await this.articleRepo.findOne({
@@ -112,13 +124,13 @@ export class ArticleService {
     });
     if (exist && exist.id > 0) throw Biz.alreadyExists('文章标识符已存在');
 
-    const status = isAdmin
+    const status = canCheck
       ? ARTICLE_STATUS_PASS
       : await this.getDefaultArticleStatus(userId);
 
     const now = new Date();
     let recommendAt: Date | null = null;
-    if (isAdmin && input.is_recommend) {
+    if (canRecommend && input.is_recommend) {
       recommendAt = input.recommend_at ? new Date(input.recommend_at) : now;
     }
 
@@ -133,10 +145,10 @@ export class ArticleService {
       description: input.description ?? '',
       content: input.content ?? '',
       source: input.source ?? '',
-      source_url: input.source_url ?? '',
+      source_url: sanitizeHttpUrl(input.source_url),
       recommend_at: recommendAt,
       status,
-      is_notice: isAdmin && input.is_notice ? 1 : 0,
+      is_notice: canRecommend && input.is_notice ? 1 : 0,
       reject_reason: '',
       created_at: now,
       updated_at: now,
@@ -203,10 +215,18 @@ export class ArticleService {
     const exist = await this.articleRepo.findOne({ where: { id } });
     if (!exist) throw Biz.notFound('文章不存在');
 
-    const isAdmin = await this.permissionService.isAdmin(user.userId);
-    if (!isAdmin && exist.user_id !== user.userId) {
+    // 修改「他人」文章需 UpdateArticle 权限；无该权限时仍可改自己的文章
+    const canEditAny = await this.permissionService.check(
+      user.userId,
+      '/api.v1.ArticleAPI/UpdateArticle',
+    );
+    if (!canEditAny && exist.user_id !== user.userId) {
       throw Biz.permissionDenied('您没有权限修改此文章');
     }
+    const canRecommend = await this.permissionService.check(
+      user.userId,
+      '/api.v1.ArticleAPI/RecommendArticles',
+    );
 
     const categoryIds = uniqueNumberArray(toNumberArray(input.category_id));
 
@@ -214,7 +234,7 @@ export class ArticleService {
     if (exist.status === ARTICLE_STATUS_REJECT) status = ARTICLE_STATUS_PENDING;
 
     let recommendAt = exist.recommend_at;
-    if (isAdmin && input.is_recommend && !exist.recommend_at) {
+    if (canRecommend && input.is_recommend && !exist.recommend_at) {
       recommendAt = new Date();
     }
 
@@ -239,9 +259,9 @@ export class ArticleService {
         description,
         content,
         source: input.source ?? exist.source,
-        source_url: input.source_url ?? exist.source_url,
+        source_url: sanitizeHttpUrl(input.source_url ?? exist.source_url),
         status,
-        is_notice: isAdmin ? (input.is_notice ? 1 : 0) : exist.is_notice,
+        is_notice: canRecommend ? (input.is_notice ? 1 : 0) : exist.is_notice,
         recommend_at: recommendAt,
         updated_at: now,
       });
@@ -257,8 +277,12 @@ export class ArticleService {
     let idList = toNumberArray(ids);
     if (!idList.length) return {};
 
-    const isAdmin = await this.permissionService.isAdmin(user.userId);
-    if (!isAdmin) {
+    // 删除「他人」文章需 DeleteArticle 权限；无该权限时仅能删自己的
+    const canDeleteAny = await this.permissionService.check(
+      user.userId,
+      '/api.v1.ArticleAPI/DeleteArticle',
+    );
+    if (!canDeleteAny) {
       const own = await this.articleRepo.find({
         where: { id: In(idList), user_id: user.userId },
         select: { id: true },
@@ -312,11 +336,12 @@ export class ArticleService {
     }
     if (!row) throw Biz.notFound('文章不存在');
 
-    const isAdmin = user
-      ? await this.permissionService.isAdmin(user.userId)
+    // 查看他人「未通过审核」的文章需 CheckArticles 权限
+    const canCheck = user
+      ? await this.permissionService.check(user.userId, '/api.v1.ArticleAPI/CheckArticles')
       : false;
     if (row.status !== ARTICLE_STATUS_PASS) {
-      if (!isAdmin && (!user || user.userId !== row.user_id)) {
+      if (!canCheck && (!user || user.userId !== row.user_id)) {
         throw Biz.notFound('文章不存在或没有权限查看');
       }
     }
@@ -334,14 +359,15 @@ export class ArticleService {
   ): Promise<{ total: number; article: any[] }> {
     const page = Math.max(1, Number(query.page) || 1);
     const size = Number(query.size) || 10;
-    const isAdmin = user
-      ? await this.permissionService.isAdmin(user.userId)
+    // 列出未发布/未通过文章需 ListArticle 权限
+    const canListAll = user
+      ? await this.permissionService.check(user.userId, '/api.v1.ArticleAPI/ListArticle')
       : false;
 
     const qb = this.articleRepo.createQueryBuilder('a');
     qb.where('a.deleted_at IS NULL');
 
-    if (!isAdmin) {
+    if (!canListAll) {
       qb.andWhere('a.status = :pass', { pass: ARTICLE_STATUS_PASS });
     } else {
       const status = toNumberArray(query.status);
