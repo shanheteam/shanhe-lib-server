@@ -10,7 +10,6 @@ import {
 } from '../../entities';
 import { ArticleController } from './article.controller';
 import { ArticleService } from './article.service';
-import { SpiderModule } from '../spider/spider.module';
 
 @Module({
   imports: [
@@ -22,7 +21,6 @@ import { SpiderModule } from '../spider/spider.module';
       User,
       Group,
     ]),
-    SpiderModule,
   ],
   controllers: [ArticleController],
   providers: [ArticleService],

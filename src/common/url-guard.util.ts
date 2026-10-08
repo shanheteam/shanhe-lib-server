@@ -46,8 +46,9 @@ export function isPrivateIp(ip: string): boolean {
 }
 
 /**
- * 校验出站 URL 是否安全。不安全时抛出 Error（含中文提示，可直接透出给调用方）。
- * @param allowPrivate 允许访问内网（如采集内网文库时可按需开启）
+ * 校验出站 URL 是否安全（防 SSRF）。不安全时抛出 Error（含中文提示，可直接透出给调用方）。
+ * 调用方：config.controller.ts 的站点地图远端地址校验。
+ * @param allowPrivate 允许访问内网地址（默认禁止）
  */
 export async function assertSafeOutboundUrl(
   rawUrl: string,

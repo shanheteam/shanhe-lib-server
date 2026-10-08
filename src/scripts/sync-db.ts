@@ -1,4 +1,5 @@
 import 'reflect-metadata';
+import { In } from 'typeorm';
 import { AppDataSource } from '../database/data-source';
 import {
   User,
@@ -69,8 +70,26 @@ async function main() {
       await permissionRepo.save(exist);
     }
   }
-  // 废弃权限清理
-  await permissionRepo.delete({ path: '/api.v1.AttachmentAPI/DeleteAttachment' });
+  // 废弃权限清理：seed 中已不存在的权限（对应接口已从代码中删除）连同用户组授权一并清理。
+  //
+  // 这里用「seed 差集」而不是硬编码 path 列表：此前写法是
+  //   await permissionRepo.delete({ path: '/api.v1.AttachmentAPI/DeleteAttachment' });
+  // 每删一个接口都要记得手工补一行，实际已漏掉多处（例如本次移除的采集模块 22 条权限），
+  // 而且只删权限、不删 group_permission，会在授权表里留下悬空的 permission_id。
+  //
+  // 前提：权限仅由 PERMISSIONS_SEED 定义，后台没有创建权限的接口（permission.controller
+  // 只有 GET/PUT），因此不在 seed 里的权限必定是废弃残留，可安全删除。
+  const seedPaths = new Set(PERMISSIONS_SEED.map((p) => p.path));
+  const stalePermissions = (await permissionRepo.find()).filter(
+    (perm) => !seedPaths.has(perm.path),
+  );
+  if (stalePermissions.length) {
+    const staleIds = stalePermissions.map((perm) => Number(perm.id));
+    log(`清理废弃权限 ${staleIds.length} 条（含用户组授权）...`);
+    // 顺序要紧：先删授权，再删权限，否则 group_permission 会残留指向已删权限的记录
+    await groupPermissionRepo.delete({ permission_id: In(staleIds) });
+    await permissionRepo.delete({ id: In(staleIds) });
+  }
 
   // 3. 管理员账号（ID=1 为 root 用户，拥有全部权限）
   const userCount = await userRepo.count();
