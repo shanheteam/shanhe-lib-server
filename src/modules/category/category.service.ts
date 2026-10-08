@@ -8,7 +8,6 @@ import { JwtUser } from '../../auth/jwt-user.type';
 import { toNumberArray, toBoolArray } from '../../common/query.util';
 
 export const CATEGORY_TYPE_DOCUMENT = 0;
-export const CATEGORY_TYPE_ARTICLE = 1;
 
 export interface CategoryInput {
   id?: number;

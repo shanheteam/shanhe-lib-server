@@ -57,8 +57,3 @@ export async function checkPassword(rawPassword: string, encoded: string): Promi
   if (algorithm !== 'md5') return false;
   return safeEqual(`md5$${salt}$${md5hex(salt + rawPassword)}`, encoded);
 }
-
-/** 存量弱哈希（md5）在校验通过后应重新哈希为 bcrypt。 */
-export function needsRehash(encoded: string): boolean {
-  return !encoded.startsWith('$2');
-}

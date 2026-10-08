@@ -13,6 +13,7 @@ import {
 import { ConfigService } from '../../config/config.service';
 import { CaptchaService } from '../captcha/captcha.service';
 import { Biz } from '../../common/biz.exception';
+import { isUserInPunishing } from '../../common/punishment.util';
 
 // 评论状态（web/utils/enum.js commentStatusOptions）
 const COMMENT_STATUS_APPROVED = 1;
@@ -40,22 +41,15 @@ export class CommentService {
     private readonly captchaService: CaptchaService,
   ) {}
 
-  private async isInPunishing(userId: number, types: number[]): Promise<boolean> {
-    if (userId <= 1) return false;
-    const row = await this.punishmentRepo
-      .createQueryBuilder('p')
-      .where('p.user_id = :userId', { userId })
-      .andWhere('p.enable = :enable', { enable: true })
-      .andWhere('p.type IN (:...types)', { types })
-      .andWhere('(p.end_time IS NULL OR p.end_time > :now)', { now: new Date() })
-      .getOne();
-    return !!row;
-  }
-
   /** 校验用户是否可以评论，否则抛出业务异常。 */
   private async assertCanComment(userId: number): Promise<void> {
     if (userId <= 0) throw Biz.unauthenticated('请先登录');
-    if (await this.isInPunishing(userId, [PUNISHMENT_COMMENT_LIMITED, PUNISHMENT_DISABLED])) {
+    if (
+      await isUserInPunishing(this.punishmentRepo, userId, [
+        PUNISHMENT_COMMENT_LIMITED,
+        PUNISHMENT_DISABLED,
+      ])
+    ) {
       throw Biz.permissionDenied('您已经被禁止评论');
     }
 

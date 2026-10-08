@@ -9,6 +9,7 @@ import {
   User,
 } from '../../entities';
 import { Biz } from '../../common/biz.exception';
+import { isUserInPunishing } from '../../common/punishment.util';
 
 // 收藏类型（model/favorite.go）
 const FAVORITE_TYPE_ARTICLE = 1;
@@ -32,24 +33,17 @@ export class FavoriteService {
     private readonly punishmentRepo: Repository<Punishment>,
   ) {}
 
-  private async isInPunishing(userId: number, types: number[]): Promise<boolean> {
-    if (userId <= 1) return false;
-    const row = await this.punishmentRepo
-      .createQueryBuilder('p')
-      .where('p.user_id = :userId', { userId })
-      .andWhere('p.enable = :enable', { enable: true })
-      .andWhere('p.type IN (:...types)', { types })
-      .andWhere('(p.end_time IS NULL OR p.end_time > :now)', { now: new Date() })
-      .getOne();
-    return !!row;
-  }
-
   async createFavorite(
     userId: number,
     body: Record<string, any>,
     ip: string,
   ): Promise<Record<string, unknown>> {
-    if (await this.isInPunishing(userId, [PUNISHMENT_FAVORITE_LIMITED, PUNISHMENT_DISABLED])) {
+    if (
+      await isUserInPunishing(this.punishmentRepo, userId, [
+        PUNISHMENT_FAVORITE_LIMITED,
+        PUNISHMENT_DISABLED,
+      ])
+    ) {
       throw Biz.permissionDenied('您已经被禁止使用收藏功能');
     }
 

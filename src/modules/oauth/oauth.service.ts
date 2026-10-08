@@ -11,6 +11,7 @@ import { verifyIdToken } from './id-token.verify';
 import { OidcDiscoveryService } from './oidc-discovery.service';
 import { Biz, BizException } from '../../common/biz.exception';
 import { makePassword, randomString } from '../../common/password.util';
+import { buildUserJson, getUserGroupIds } from '../../common/user.util';
 
 // OAuth type constants (aligned with frontend enum)
 const OAUTH_TYPE_CUSTOM = 6;
@@ -517,11 +518,11 @@ export class OauthService {
       });
 
       const token = this.auth.createToken(Number(user.id));
-      const groupIds = await this.getGroupIds(Number(user.id));
+      const groupIds = await getUserGroupIds(this.userGroupRepo, Number(user.id));
 
       return {
         token,
-        user: this.buildUserJson(user, groupIds),
+        user: buildUserJson(user, groupIds),
       };
     }
 
@@ -554,11 +555,11 @@ export class OauthService {
         });
 
         const token = this.auth.createToken(Number(existingUser.id));
-        const groupIds = await this.getGroupIds(Number(existingUser.id));
+        const groupIds = await getUserGroupIds(this.userGroupRepo, Number(existingUser.id));
 
         return {
           token,
-          user: this.buildUserJson(existingUser, groupIds),
+          user: buildUserJson(existingUser, groupIds),
         };
       }
     }
@@ -617,11 +618,11 @@ export class OauthService {
     }
 
     const token = this.auth.createToken(Number(newUser.id));
-    const groupIds = await this.getGroupIds(Number(newUser.id));
+    const groupIds = await getUserGroupIds(this.userGroupRepo, Number(newUser.id));
 
     return {
       token,
-      user: this.buildUserJson(newUser, groupIds),
+      user: buildUserJson(newUser, groupIds),
     };
   }
 
@@ -897,11 +898,6 @@ export class OauthService {
     throw Biz.invalidArgument('不支持的OAuth类型');
   }
 
-  private async getGroupIds(userId: number): Promise<number[]> {
-    const rows = await this.userGroupRepo.find({ where: { user_id: userId } });
-    return rows.map((r) => Number(r.group_id)).filter((id) => id > 0);
-  }
-
   /**
    * SSO：校验浏览器带入的 user-center 共享 access_token cookie（Cookie 真源）。
    * 用 user-center RS256 公钥校验其 JWT，提取 sub（user-center 用户标识）→ 经 UserOauth 绑定
@@ -1056,11 +1052,11 @@ export class OauthService {
     }
 
     const token2 = this.auth.createToken(Number(user.id));
-    const groupIds = await this.getGroupIds(Number(user.id));
+    const groupIds = await getUserGroupIds(this.userGroupRepo, Number(user.id));
     const ret: any = {
       valid: true,
       token: token2,
-      user: this.buildUserJson(user, groupIds),
+      user: buildUserJson(user, groupIds),
     };
     if (refreshedTokens) ret.refresh = refreshedTokens;
     return ret;
@@ -1194,31 +1190,5 @@ export class OauthService {
       if (key === name) return decodeURIComponent(part.slice(idx + 1).trim());
     }
     return '';
-  }
-
-  private buildUserJson(user: User, groupIds: number[] = []): Record<string, unknown> {
-    return {
-      id: Number(user.id),
-      mobile: user.mobile,
-      email: user.email,
-      address: user.address,
-      signature: user.signature,
-      last_login_ip: user.last_login_ip,
-      register_ip: user.register_ip,
-      doc_count: user.doc_count,
-      follow_count: user.follow_count,
-      fans_count: user.fans_count,
-      favorite_count: user.favorite_count,
-      comment_count: user.comment_count,
-      credit_count: user.credit_count,
-      article_count: user.article_count,
-      avatar: user.avatar,
-      student_id: user.student_id,
-      realname: user.realname,
-      login_at: user.login_at,
-      created_at: user.created_at,
-      updated_at: user.updated_at,
-      group_id: groupIds,
-    };
   }
 }

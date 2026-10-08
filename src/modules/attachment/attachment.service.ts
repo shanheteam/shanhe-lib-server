@@ -13,6 +13,7 @@ import {
   UserGroup,
 } from '../../entities';
 import { Biz } from '../../common/biz.exception';
+import { isUserInPunishing } from '../../common/punishment.util';
 import { OssService, contentTypeOf } from './oss.service';
 import * as crypto from 'crypto';
 import * as fs from 'fs';
@@ -240,25 +241,12 @@ export class AttachmentService {
   /** 校验用户是否在上传文档权限（未被处罚 + 用户组 enable_upload）。 */
   async canAccessUploadDocument(userId: number): Promise<boolean> {
     if (userId === 1) return true;
-    if (await this.isInPunishing(userId, [1, 3])) return false;
+    if (await isUserInPunishing(this.punishmentRepo, userId, [1, 3])) return false;
     const row = await this.groupRepo
       .createQueryBuilder('g')
       .innerJoin(UserGroup, 'ug', 'ug.group_id = g.id')
       .where('ug.user_id = :userId', { userId })
       .andWhere('g.enable_upload = :enable', { enable: true })
-      .getOne();
-    return !!row;
-  }
-
-  /** 用户是否处于启用且未过期的指定处罚类型（1禁用 3禁止上传）中。 */
-  async isInPunishing(userId: number, types: number[]): Promise<boolean> {
-    if (userId <= 1) return false;
-    const row = await this.punishmentRepo
-      .createQueryBuilder('p')
-      .where('p.user_id = :userId', { userId })
-      .andWhere('p.enable = :enable', { enable: true })
-      .andWhere('p.type IN (:...types)', { types })
-      .andWhere('(p.end_time IS NULL OR p.end_time > :now)', { now: new Date() })
       .getOne();
     return !!row;
   }

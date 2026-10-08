@@ -15,6 +15,7 @@ import { RequirePermission } from '../../common/decorators/permission.decorator'
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { JwtUser } from '../../auth/jwt-user.type';
 import { PermissionService } from '../../auth/permission.service';
+import { positiveNumberArray } from '../../common/query.util';
 
 /**
  * 文档 API 控制器。
@@ -27,11 +28,6 @@ export class DocumentController {
     private readonly permissionService: PermissionService,
   ) {}
 
-  private numArray(v: unknown): number[] {
-    if (v === undefined || v === null || v === '') return [];
-    const arr = Array.isArray(v) ? v : [v];
-    return arr.map((n) => Number(n)).filter((n) => Number.isFinite(n) && n > 0);
-  }
 
   private userIdOf(user?: JwtUser): number {
     return user?.userId ?? 0;
@@ -72,7 +68,7 @@ export class DocumentController {
   @Public()
   @Get('related')
   related(@Query('id') id: unknown) {
-    return this.service.getRelatedDocuments(this.numArray(id)[0] || 0);
+    return this.service.getRelatedDocuments(positiveNumberArray(id)[0] || 0);
   }
 
   @Public()
@@ -98,7 +94,7 @@ export class DocumentController {
   ) {
     await this.service.createDocument(
       this.userIdOf(user),
-      this.numArray(body.category_id),
+      positiveNumberArray(body.category_id),
       Array.isArray(body.document) ? body.document : [],
     );
     return {};
@@ -124,7 +120,7 @@ export class DocumentController {
     await this.service.deleteDocument(
       this.userIdOf(user),
       await this.isAdmin(user),
-      this.numArray(id),
+      positiveNumberArray(id),
     );
     return {};
   }
@@ -138,7 +134,7 @@ export class DocumentController {
     @Query('downcode') downcode?: string,
   ) {
     return this.service.downloadDocument(
-      this.numArray(id)[0] || 0,
+      positiveNumberArray(id)[0] || 0,
       this.userIdOf(user),
       ip || '',
       downcode || '',
@@ -160,7 +156,7 @@ export class DocumentController {
   ) {
     return this.service.getDocumentScore(
       this.userIdOf(user),
-      this.numArray(documentId)[0] || 0,
+      positiveNumberArray(documentId)[0] || 0,
     );
   }
 
@@ -170,7 +166,7 @@ export class DocumentController {
   @Put('recommend')
   async recommend(@Body() body: Record<string, any>) {
     await this.service.setDocumentRecommend(
-      this.numArray(body.id),
+      positiveNumberArray(body.id),
       Number(body.type) || 0,
     );
     return {};
@@ -180,7 +176,7 @@ export class DocumentController {
   @Put('check')
   async check(@Body() body: Record<string, any>) {
     await this.service.checkDocument(
-      this.numArray(body.id),
+      positiveNumberArray(body.id),
       Number(body.status),
     );
     return {};
@@ -197,8 +193,8 @@ export class DocumentController {
   @Put('category')
   async setCategory(@Body() body: Record<string, any>) {
     await this.service.setDocumentsCategory(
-      this.numArray(body.document_id),
-      this.numArray(body.category_id),
+      positiveNumberArray(body.document_id),
+      positiveNumberArray(body.category_id),
     );
     return {};
   }
@@ -207,7 +203,7 @@ export class DocumentController {
   @Put('language')
   async setLanguage(@Body() body: Record<string, any>) {
     await this.service.setDocumentsLanguage(
-      this.numArray(body.document_id),
+      positiveNumberArray(body.document_id),
       String(body.language ?? ''),
     );
     return {};
@@ -221,7 +217,7 @@ export class DocumentController {
     @Ip() ip: string,
   ) {
     return this.service.downloadDocumentToBeReviewed(
-      this.numArray(id)[0] || 0,
+      positiveNumberArray(id)[0] || 0,
       this.userIdOf(user),
       ip || '',
     );
@@ -238,14 +234,14 @@ export class DocumentController {
   @RequirePermission('/api.v1.RecycleAPI/RecoverRecycleDocument')
   @Put('recycle')
   async recoverRecycle(@Body() body: Record<string, any>) {
-    await this.service.recoverRecycleDocument(this.numArray(body.id));
+    await this.service.recoverRecycleDocument(positiveNumberArray(body.id));
     return {};
   }
 
   @RequirePermission('/api.v1.RecycleAPI/DeleteRecycleDocument')
   @Delete('recycle')
   async deleteRecycle(@Query('id') id: unknown) {
-    await this.service.deleteRecycleDocument(this.numArray(id));
+    await this.service.deleteRecycleDocument(positiveNumberArray(id));
     return {};
   }
 

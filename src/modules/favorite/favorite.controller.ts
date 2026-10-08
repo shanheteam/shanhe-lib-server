@@ -11,6 +11,7 @@ import { FavoriteService } from './favorite.service';
 import { RequireLogin } from '../../common/decorators/require-login.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { JwtUser } from '../../auth/jwt-user.type';
+import { positiveNumberArray } from '../../common/query.util';
 
 /**
  * 收藏 API 控制器。
@@ -20,11 +21,6 @@ import { JwtUser } from '../../auth/jwt-user.type';
 export class FavoriteController {
   constructor(private readonly service: FavoriteService) {}
 
-  private numArray(v: unknown): number[] {
-    if (v === undefined || v === null || v === '') return [];
-    const arr = Array.isArray(v) ? v : [v];
-    return arr.map((n) => Number(n)).filter((n) => Number.isFinite(n) && n > 0);
-  }
 
   @RequireLogin()
   @Post()
@@ -39,7 +35,7 @@ export class FavoriteController {
   @RequireLogin()
   @Delete()
   async remove(@Query('id') id: unknown, @CurrentUser() user: JwtUser) {
-    await this.service.deleteFavorite(user?.userId ?? 0, this.numArray(id));
+    await this.service.deleteFavorite(user?.userId ?? 0, positiveNumberArray(id));
     return {};
   }
 
@@ -52,7 +48,7 @@ export class FavoriteController {
   ) {
     return this.service.getFavorite(
       user?.userId ?? 0,
-      this.numArray(documentId)[0] || 0,
+      positiveNumberArray(documentId)[0] || 0,
       Number(type) || 0,
     );
   }

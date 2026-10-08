@@ -15,6 +15,7 @@ import {
 } from '../../entities';
 import { Biz } from '../../common/biz.exception';
 import { checkPassword, makePassword, randomString } from '../../common/password.util';
+import { buildUserJson, getUserGroupIds } from '../../common/user.util';
 import { ConfigService } from '../../config/config.service';
 import { AuthService } from '../../auth/auth.service';
 import { PermissionService } from '../../auth/permission.service';
@@ -128,43 +129,12 @@ export class UserService {
     return !!email && EMAIL_RE.test(email);
   }
 
-  private buildUserJson(user: User, groupIds: number[] = []): Record<string, unknown> {
-    return {
-      id: Number(user.id),
-      mobile: user.mobile,
-      email: user.email,
-      address: user.address,
-      signature: user.signature,
-      last_login_ip: user.last_login_ip,
-      register_ip: user.register_ip,
-      doc_count: user.doc_count,
-      follow_count: user.follow_count,
-      fans_count: user.fans_count,
-      favorite_count: user.favorite_count,
-      comment_count: user.comment_count,
-      credit_count: user.credit_count,
-      article_count: user.article_count,
-      avatar: user.avatar,
-      student_id: user.student_id,
-      realname: user.realname,
-      login_at: user.login_at,
-      created_at: user.created_at,
-      updated_at: user.updated_at,
-      group_id: groupIds,
-    };
-  }
-
   private buildPublicUserJson(user: User, groupIds: number[] = []): Record<string, unknown> {
-    const full = this.buildUserJson(user, groupIds);
+    const full = buildUserJson(user, groupIds);
     const out: Record<string, unknown> = {};
     // 公开资料仅返回 PUBLIC_FIELDS，避免泄露目标用户所属角色组等信息
     for (const field of PUBLIC_FIELDS) out[field] = full[field];
     return out;
-  }
-
-  private async getGroupIds(userId: number): Promise<number[]> {
-    const rows = await this.userGroupRepo.find({ where: { user_id: userId } });
-    return rows.map((r) => Number(r.group_id)).filter((id) => id > 0);
   }
 
   /**
@@ -303,12 +273,12 @@ export class UserService {
       throw Biz.notFound('用户不存在');
     }
 
-    const groupIds = await this.getGroupIds(id);
+    const groupIds = await getUserGroupIds(this.userGroupRepo, id);
     const isAdmin = user ? await this.permissionService.isAdmin(user.userId) : false;
     const isSelf = user ? user.userId === id : false;
 
     return isAdmin || isSelf
-      ? this.buildUserJson(target, groupIds)
+      ? buildUserJson(target, groupIds)
       : this.buildPublicUserJson(target, groupIds);
   }
 
@@ -503,7 +473,7 @@ export class UserService {
       groupMap.get(uid)!.push(Number(ug.group_id));
     }
 
-    const result = rows.map((r) => this.buildUserJson(r, groupMap.get(Number(r.id)) ?? []));
+    const result = rows.map((r) => buildUserJson(r, groupMap.get(Number(r.id)) ?? []));
     return { total, user: result };
   }
 
