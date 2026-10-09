@@ -24,7 +24,6 @@ import { RequireLogin } from '../../common/decorators/require-login.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { Biz } from '../../common/biz.exception';
 import { PermissionService } from '../../auth/permission.service';
-import { OssService } from '../attachment/oss.service';
 import { ConfigService } from '../../config/config.service';
 import { MailService } from '../mail/mail.service';
 import { assertSafeOutboundUrl } from '../../common/url-guard.util';
@@ -87,7 +86,6 @@ export class ConfigController {
     private readonly configService: ConfigService,
     private readonly mailService: MailService,
     private readonly dataSource: DataSource,
-    private readonly ossService: OssService,
   ) {
     // 定时自动重建 sitemap：启动 5 分钟后首次生成，之后每天生成一次（兜底，手动按钮仍可用）
     setTimeout(() => {
@@ -456,11 +454,11 @@ export class ConfigController {
   @Put('sitemap')
   async updateSitemap() {
     const domain = (await this.getConfigValue('system', 'domain')).replace(/\/+$/, '');
-    // 站点地图产物统一落到 OSS（sitemap/ 前缀），loc 使用 OSS 可访问域名；
-    // OSS 未启用时回退本地磁盘静态目录（此时 loc 指向本站 /sitemap/ 路径）。
-    const sitemapBase = this.ossService.isEnabled()
-      ? this.ossService.buildUrl('sitemap').replace(/\/+$/, '')
-      : `${domain}/sitemap`;
+    // 站点地图**只生成在后端本地磁盘**（不传 OSS），由 main.ts 的
+    // useStaticAssets(sitemapDir, { prefix: '/sitemap' }) 对外提供；
+    // 索引里的 loc 一律使用站点域名，前台再由 EdgeOne Pages Function 代理 /sitemap/*，
+    // 这样索引与子文件的地址都在站点域名下，爬虫无需跨域。
+    const sitemapBase = `${domain}/sitemap`;
     const limit = 10000;
     const indexes: Array<{ loc: string; lastmod: string }> = [];
 
@@ -545,22 +543,15 @@ export class ConfigController {
    * 写入站点地图文件：优先上传 OSS（线上 serverless 容器文件系统只读，本地写盘会失败），
    * OSS 未启用时回退本地磁盘（保留本地静态托管能力）。
    */
+  /**
+   * 写入站点地图文件——**只写后端本地磁盘**，不再上传 OSS。
+   *
+   * 为什么不再传 OSS：站点地图属于站点自身的产物，放在后端本地并由 /sitemap 静态暴露
+   * 即可，前台再经 EdgeOne Pages Function 代理；两处存放（本地 + OSS）会导致
+   * 「更新了却看不出变化」——新文件去了 OSS，而 /sitemap/ 读的是本地旧文件。
+   * 注意：serverless 只读文件系统下会写盘失败，此时应改用 OSS/对象存储方案。
+   */
   private async putSitemapFile(relativePath: string, content: string): Promise<void> {
-    if (this.ossService.isEnabled()) {
-      await this.ossService.put(relativePath, Buffer.from(content, 'utf8'), 'application/xml');
-      // 同时写一份到本地磁盘（best-effort）：
-      //  · main.ts 把 sitemap/ 目录静态挂在 /sitemap 下，本地有文件才能让
-      //    <API域名>/sitemap/sitemap.xml 拿到**最新**内容；否则开启 OSS 后该地址会一直
-      //    停在上次本地写入的旧文件上（曾因此误判为「更新站点地图无效」）。
-      //  · 前台站点地图链接指向本站 /sitemap/ 时也依赖这份文件。
-      //  · serverless 容器文件系统只读时写盘会失败，故吞掉异常，不影响 OSS 上传结果。
-      try {
-        this.writeFile(relativePath, content);
-      } catch {
-        /* 只读文件系统：忽略，OSS 上已有最新文件 */
-      }
-      return;
-    }
     this.writeFile(relativePath, content);
   }
 
