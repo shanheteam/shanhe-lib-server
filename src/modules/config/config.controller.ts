@@ -548,6 +548,17 @@ export class ConfigController {
   private async putSitemapFile(relativePath: string, content: string): Promise<void> {
     if (this.ossService.isEnabled()) {
       await this.ossService.put(relativePath, Buffer.from(content, 'utf8'), 'application/xml');
+      // 同时写一份到本地磁盘（best-effort）：
+      //  · main.ts 把 sitemap/ 目录静态挂在 /sitemap 下，本地有文件才能让
+      //    <API域名>/sitemap/sitemap.xml 拿到**最新**内容；否则开启 OSS 后该地址会一直
+      //    停在上次本地写入的旧文件上（曾因此误判为「更新站点地图无效」）。
+      //  · 前台站点地图链接指向本站 /sitemap/ 时也依赖这份文件。
+      //  · serverless 容器文件系统只读时写盘会失败，故吞掉异常，不影响 OSS 上传结果。
+      try {
+        this.writeFile(relativePath, content);
+      } catch {
+        /* 只读文件系统：忽略，OSS 上已有最新文件 */
+      }
       return;
     }
     this.writeFile(relativePath, content);
