@@ -98,6 +98,19 @@ async function bootstrap() {
   // sitemap 目录对外暴露，使 /sitemap.xml 及分页文件可被搜索引擎访问
   app.useStaticAssets(sitemapDir, { prefix: '/sitemap', setHeaders: staticHeaders });
 
+  // 后端域名（apilib）只提供 API 与静态资源，正文页面位于站点域（lib.shanhe.co）。
+  // 显式拒绝收录：避免搜索引擎把后端地址当作重复内容索引，也防止爬虫在前端拿不到内容时
+  // 退回后端域抓取。站点地图改由站点域的 /sitemap 提供（前台经 EdgeOne 边缘函数代理到本
+  // 服务），边缘函数是服务端取数、不受本 robots 限制，故本域无需声明 Sitemap。
+  app.use((req, res, next) => {
+    if (req.path === '/robots.txt') {
+      res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+      res.send('User-agent: *\nDisallow: /\n');
+      return;
+    }
+    next();
+  });
+
   await app.listen(env.port);
   console.log(`[moredoc-server] listening on http://localhost:${env.port}`);
 }
