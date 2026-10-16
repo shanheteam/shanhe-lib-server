@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { createHash, randomBytes } from 'crypto';
 import { v1 as uuidv1 } from 'uuid';
-import { In, IsNull, Not, EntityManager, Repository } from 'typeorm';
+import { In, EntityManager, Repository } from 'typeorm';
 import {
   Article,
   ArticleCategory,
@@ -15,44 +15,16 @@ import {
 import { Biz } from '../../common/biz.exception';
 import { PermissionService } from '../../auth/permission.service';
 import { JwtUser } from '../../auth/jwt-user.type';
-import { tb } from '../../database/naming-strategy';
 import { toNumberArray, toBoolArray, uniqueNumberArray } from '../../common/query.util';
 import { sanitizeHttpUrl } from '../../common/url.util';
-
-const ARTICLE_STATUS_PENDING = 0;
-const ARTICLE_STATUS_PASS = 1;
-const ARTICLE_STATUS_REJECT = 2;
-
-const ARTICLE_LIST_COLUMNS = [
-  'id',
-  'identifier',
-  'user_id',
-  'view_count',
-  'favorite_count',
-  'comment_count',
-  'title',
-  'keywords',
-  'description',
-  'created_at',
-  'updated_at',
-  'deleted_at',
-  'recommend_at',
-  'status',
-  'reject_reason',
-  'source',
-  'source_url',
-  'is_notice',
-];
-
-const ALLOWED_SORT = new Set([
-  'id',
-  'view_count',
-  'favorite_count',
-  'comment_count',
-  'created_at',
-  'updated_at',
-  'recommend_at',
-]);
+import { tb } from '../../database/naming-strategy';
+import {
+  ARTICLE_LIST_COLUMNS,
+  ALLOWED_ARTICLE_SORT,
+  ArticleStatus,
+} from './article.constant';
+import { ArticleRecycleService } from './split/article-recycle.service';
+import { ArticleSearchService } from './split/article-search.service';
 
 function stripHtml(html: string): string {
   return String(html || '')
@@ -76,6 +48,9 @@ function genArticleIdentifier(): string {
 
 @Injectable()
 export class ArticleService {
+  private readonly recycleSvc: ArticleRecycleService;
+  private readonly searchSvc: ArticleSearchService;
+
   constructor(
     @InjectRepository(Article)
     private readonly articleRepo: Repository<Article>,
@@ -90,7 +65,29 @@ export class ArticleService {
     @InjectRepository(Group)
     private readonly groupRepo: Repository<Group>,
     private readonly permissionService: PermissionService,
-  ) {}
+  ) {
+    const attachListMeta = (rows: Article[]) => this.attachListMeta(rows);
+    const applyCreatedAtRange = (qb: any, value: unknown) =>
+      this.applyCreatedAtRange(qb, value);
+
+    this.recycleSvc = new ArticleRecycleService(
+      this.articleRepo,
+      this.articleCategoryRepo,
+      this.articleRelateRepo,
+      this.categoryRepo,
+      this.userRepo,
+      attachListMeta,
+    );
+    this.searchSvc = new ArticleSearchService(
+      this.articleRepo,
+      this.articleRelateRepo,
+      this.articleCategoryRepo,
+      this.categoryRepo,
+      this.userRepo,
+      attachListMeta,
+      applyCreatedAtRange,
+    );
+  }
 
   // ---------- 创建 / 更新 / 删除 ----------
 
@@ -125,7 +122,7 @@ export class ArticleService {
     if (exist && exist.id > 0) throw Biz.alreadyExists('文章标识符已存在');
 
     const status = canCheck
-      ? ARTICLE_STATUS_PASS
+      ? ArticleStatus.Pass
       : await this.getDefaultArticleStatus(userId);
 
     const now = new Date();
@@ -231,7 +228,7 @@ export class ArticleService {
     const categoryIds = uniqueNumberArray(toNumberArray(input.category_id));
 
     let status = exist.status;
-    if (exist.status === ARTICLE_STATUS_REJECT) status = ARTICLE_STATUS_PENDING;
+    if (exist.status === ArticleStatus.Reject) status = ArticleStatus.Pending;
 
     let recommendAt = exist.recommend_at;
     if (canRecommend && input.is_recommend && !exist.recommend_at) {
@@ -340,7 +337,7 @@ export class ArticleService {
     const canCheck = user
       ? await this.permissionService.check(user.userId, '/api.v1.ArticleAPI/CheckArticles')
       : false;
-    if (row.status !== ARTICLE_STATUS_PASS) {
+    if (row.status !== ArticleStatus.Pass) {
       if (!canCheck && (!user || user.userId !== row.user_id)) {
         throw Biz.notFound('文章不存在或没有权限查看');
       }
@@ -368,7 +365,7 @@ export class ArticleService {
     qb.where('a.deleted_at IS NULL');
 
     if (!canListAll) {
-      qb.andWhere('a.status = :pass', { pass: ARTICLE_STATUS_PASS });
+      qb.andWhere('a.status = :pass', { pass: ArticleStatus.Pass });
     } else {
       const status = toNumberArray(query.status);
       if (status.length) qb.andWhere('a.status IN (:...status)', { status });
@@ -405,7 +402,7 @@ export class ArticleService {
     this.applyCreatedAtRange(qb, query.created_at);
 
     const orderField =
-      typeof query.order === 'string' && ALLOWED_SORT.has(query.order)
+      typeof query.order === 'string' && ALLOWED_ARTICLE_SORT.has(query.order)
         ? query.order
         : 'id';
     qb.orderBy(`a.${orderField}`, 'DESC');
@@ -496,91 +493,19 @@ export class ArticleService {
   async listRecycle(
     query: Record<string, any>,
   ): Promise<{ total: number; article: any[] }> {
-    const page = Math.max(1, Number(query.page) || 1);
-    const size = Number(query.size) || 10;
-
-    const qb = this.articleRepo.createQueryBuilder('a');
-    qb.where('a.deleted_at IS NOT NULL');
-    if (query.wd) {
-      qb.andWhere(
-        '(a.title LIKE :wd OR a.keywords LIKE :wd OR a.description LIKE :wd OR a.content LIKE :wd)',
-        { wd: `%${query.wd}%` },
-      );
-    }
-    qb.orderBy('a.deleted_at', 'DESC');
-
-    const total = await qb.getCount();
-    qb.select(ARTICLE_LIST_COLUMNS.map((c) => `a.${c}`))
-      .skip((page - 1) * size)
-      .take(size);
-    const rows = await qb.getMany();
-
-    return { total, article: await this.attachListMeta(rows) };
+    return this.recycleSvc.listRecycle(query);
   }
 
   async restore(ids: unknown): Promise<Record<string, never>> {
-    const idList = toNumberArray(ids);
-    if (!idList.length) return {};
-
-    await this.articleRepo.manager.transaction(async (manager) => {
-      await manager.update(Article, { id: In(idList) }, {
-        deleted_at: null,
-        updated_at: new Date(),
-      });
-
-      const acs = await manager.find(ArticleCategory, {
-        where: { article_id: In(idList) },
-      });
-      const countMap = new Map<number, number>();
-      for (const ac of acs) {
-        countMap.set(ac.category_id, (countMap.get(ac.category_id) || 0) + 1);
-      }
-      for (const [cid, count] of countMap) {
-        await manager.increment(Category, { id: cid }, 'doc_count', count);
-      }
-
-      const articles = await manager.find(Article, {
-        where: { id: In(idList) },
-        select: { id: true, user_id: true },
-      });
-      for (const a of articles) {
-        await manager.increment(User, { id: a.user_id }, 'article_count', 1);
-      }
-    });
-
-    return {};
+    return this.recycleSvc.restore(ids);
   }
 
   async deleteRecycle(ids: unknown): Promise<Record<string, never>> {
-    const idList = toNumberArray(ids);
-    if (!idList.length) return {};
-
-    await this.articleRepo.manager.transaction(async (manager) => {
-      await manager.delete(Article, { id: In(idList) });
-      await manager.delete(ArticleCategory, { article_id: In(idList) });
-      await manager.delete(ArticleRelate, { article_id: In(idList) });
-    });
-
-    return {};
+    return this.recycleSvc.deleteRecycle(ids);
   }
 
   async emptyRecycle(): Promise<Record<string, never>> {
-    for (;;) {
-      const rows = await this.articleRepo.find({
-        where: { deleted_at: Not(IsNull()) },
-        select: { id: true },
-        take: 100,
-      });
-      const ids = rows.map((r) => r.id);
-      if (!ids.length) break;
-
-      await this.articleRepo.manager.transaction(async (manager) => {
-        await manager.delete(Article, { id: In(ids) });
-        await manager.delete(ArticleCategory, { article_id: In(ids) });
-        await manager.delete(ArticleRelate, { article_id: In(ids) });
-      });
-    }
-    return {};
+    return this.recycleSvc.emptyRecycle();
   }
 
   // ---------- 搜索 / 相关 ----------
@@ -588,98 +513,11 @@ export class ArticleService {
   async search(
     query: Record<string, any>,
   ): Promise<{ total: number; spend: string; article: any[] }> {
-    const start = Date.now();
-    const wd = String(query.wd || '').trim();
-    if (!wd) return { total: 0, spend: '0.000', article: [] };
-
-    const page = Math.max(1, Number(query.page) || 1);
-    const size = Math.max(1, Math.min(10, Number(query.size) || 10));
-
-    const qb = this.articleRepo.createQueryBuilder('a');
-    qb.where('a.deleted_at IS NULL AND a.status = :pass', {
-      pass: ARTICLE_STATUS_PASS,
-    });
-
-    const words = wd.split(/\s+/).filter(Boolean);
-    words.forEach((word, i) => {
-      const key = `wd${i}`;
-      qb.andWhere(
-        `(a.title LIKE :${key} OR a.keywords LIKE :${key} OR a.description LIKE :${key})`,
-        { [key]: `%${word}%` },
-      );
-    });
-
-    const categoryIds = toNumberArray(query.category_id);
-    if (categoryIds.length) {
-      qb.andWhere(
-        `EXISTS (SELECT 1 FROM ${tb('article_category')} ac WHERE ac.article_id = a.id AND ac.category_id IN (:...categoryIds))`,
-        { categoryIds },
-      );
-    }
-
-    const userIds = toNumberArray(query.user_id);
-    if (userIds.length) qb.andWhere('a.user_id IN (:...userIds)', { userIds });
-
-    this.applyCreatedAtRange(qb, query.created_at);
-
-    const sortField =
-      query.sort === 'latest'
-        ? 'id'
-        : typeof query.sort === 'string' && ALLOWED_SORT.has(query.sort)
-          ? query.sort
-          : 'id';
-    qb.orderBy(`a.${sortField}`, 'DESC');
-
-    const total = await qb.getCount();
-    qb.select(ARTICLE_LIST_COLUMNS.map((c) => `a.${c}`))
-      .skip((page - 1) * size)
-      .take(size);
-    const rows = await qb.getMany();
-
-    return {
-      total,
-      spend: ((Date.now() - start) / 1000).toFixed(3),
-      article: await this.attachListMeta(rows),
-    };
+    return this.searchSvc.search(query);
   }
 
   async getRelated(query: Record<string, any>): Promise<{ article: any[] }> {
-    const identifier = String(query.identifier || '');
-    if (!identifier) throw Biz.invalidArgument('参数错误:文章标识为空');
-
-    const target = await this.articleRepo.findOne({
-      where: { identifier },
-      select: { id: true },
-    });
-    if (!target) throw Biz.notFound('相关文章不存在');
-
-    const relate = await this.articleRelateRepo.findOne({
-      where: { article_id: target.id },
-    });
-
-    let ids: number[] = [];
-    if (relate && relate.related_article_id) {
-      try {
-        const parsed = JSON.parse(relate.related_article_id);
-        if (Array.isArray(parsed)) {
-          ids = parsed.map((v) => Number(v)).filter((n) => n > 0);
-        }
-      } catch {
-        ids = [];
-      }
-    }
-
-    let rows: Article[] = [];
-    if (ids.length) {
-      rows = await this.articleRepo.find({
-        where: { id: In(ids), status: ARTICLE_STATUS_PASS, deleted_at: IsNull() },
-        take: 11,
-      });
-    }
-
-    if (!rows.length) return { article: [] };
-
-    return { article: await this.attachListMeta(rows) };
+    return this.searchSvc.getRelated(query);
   }
 
   // ---------- 内部方法 ----------
@@ -699,7 +537,7 @@ export class ArticleService {
   }
 
   private async getDefaultArticleStatus(userId: number): Promise<number> {
-    if (!userId) return ARTICLE_STATUS_PENDING;
+    if (!userId) return ArticleStatus.Pending;
     const group = await this.groupRepo
       .createQueryBuilder('g')
       .select('g.id', 'id')
@@ -711,9 +549,9 @@ export class ArticleService {
       })
       .getRawOne();
     if (group && Number(group.id) > 0 && Number(group.enable_article_approval) === 0) {
-      return ARTICLE_STATUS_PASS;
+      return ArticleStatus.Pass;
     }
-    return ARTICLE_STATUS_PENDING;
+    return ArticleStatus.Pending;
   }
 
   private fixKeywordsAndDescription(article: Article): void {
