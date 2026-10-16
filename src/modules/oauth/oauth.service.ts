@@ -7,11 +7,11 @@ import { JwtService } from '@nestjs/jwt';
 import { Request } from 'express';
 import { AuthService } from '../../auth/auth.service';
 import { JwksService } from './jwks.service';
-import { verifyIdToken } from './id-token.verify';
 import { OidcDiscoveryService } from './oidc-discovery.service';
 import { Biz, BizException } from '../../common/biz.exception';
 import { makePassword, randomString } from '../../common/password.util';
 import { buildUserJson, getUserGroupIds } from '../../common/user.util';
+import { UcClientService } from './split/uc-client.service';
 
 // OAuth type constants (aligned with frontend enum)
 const OAUTH_TYPE_CUSTOM = 6;
@@ -58,6 +58,7 @@ interface UcStudentIdResult {
 @Injectable()
 export class OauthService {
   private readonly logger = new Logger(OauthService.name);
+  private readonly ucClient: UcClientService;
 
   constructor(
     @InjectRepository(User)
@@ -73,7 +74,9 @@ export class OauthService {
     private readonly jwtService: JwtService,
     private readonly jwks: JwksService,
     private readonly discovery: OidcDiscoveryService,
-  ) {}
+  ) {
+    this.ucClient = new UcClientService(this.config, this.jwks, this.discovery);
+  }
 
   /**
    * Get enabled OAuth configs for frontend display
@@ -128,7 +131,7 @@ export class OauthService {
         const endSession = tokenUrl
           ? (() => {
               try {
-                return `${this.ucBaseOf(tokenUrl)}/oauth/logout`;
+                return `${this.ucClient.ucBaseOf(tokenUrl)}/oauth/logout`;
               } catch {
                 return disc && disc.end_session_endpoint ? disc.end_session_endpoint : '';
               }
@@ -145,38 +148,12 @@ export class OauthService {
   }
 
   /**
-   * 推导 user 统一认证中心（uc）API 基址。
-   * oauthCustom.token_url 形如 https://apiuser.shanhe.co/api/oauth/token，
-   * uc 基址 = token_url 去掉路径部分 + /api，即 https://apiuser.shanhe.co/api。
-   */
-  private ucBase(): string {
-    const category = OAUTH_TYPE_TO_CATEGORY[OAUTH_TYPE_CUSTOM];
-    const tokenUrl = String(this.config.get(category, 'token_url') || '').trim();
-    if (!tokenUrl) {
-      throw Biz.internal('自定义OAuth未配置token_url');
-    }
-    return this.ucBaseOf(tokenUrl);
-  }
-
-  /** 从任意 uc 端点推导 uc API 基址（形如 /api/oauth/token → https://apiuser.shanhe.co/api）。
-   * 必须用 URL 解析取 origin，禁止用 lastIndexOf('/api') 切字符串——host 含 "apiuser" 时
-   * 会误匹配出 `http://api` 之类的错误基址。 */
-  private ucBaseOf(tokenUrl: string): string {
-    try {
-      const u = new URL(tokenUrl);
-      return `${u.origin.replace(/\/+$/, '')}/api`;
-    } catch {
-      throw Biz.internal('自定义OAuth token_url 格式异常');
-    }
-  }
-
-  /**
    * 注册：lib 后端转发到 user 统一认证中心 POST ucBase/auth/register。
    * 透传 { email, real_name, password, student_id }；成功返回 uc 的 { message, userId }；
    * 非 2xx 时把 uc 的 { code, message } 映射为 Biz 错误。
    */
   async register(body: UcRegisterBody, clientIp?: string): Promise<Record<string, unknown>> {
-    const ucBase = this.ucBase();
+    const ucBase = this.ucClient.ucBase();
     const payload: Record<string, string> = {};
     if (body?.email) payload.email = body.email;
     if (body?.real_name) payload.real_name = body.real_name;
@@ -236,7 +213,7 @@ export class OauthService {
    * 获取一个随机学号：GET ucBase/users/meta/available-student-id?year=2027 → { student_id }。
    */
   async availableStudentId(clientIp?: string): Promise<UcStudentIdResult> {
-    const ucBase = this.ucBase();
+    const ucBase = this.ucClient.ucBase();
     const url = `${ucBase}/users/meta/available-student-id?year=2027`;
     let response: Response | undefined;
     const stuHeaders: Record<string, string> = {};
@@ -298,7 +275,7 @@ export class OauthService {
     }
 
     // Exchange code for access token (with PKCE code_verifier)
-    const tokenData = await this.exchangeCodeForToken(
+    const tokenData = await this.ucClient.exchangeCodeForToken(
       oauthType,
       code,
       client_id,
@@ -310,15 +287,15 @@ export class OauthService {
     const access_token = tokenData.access_token || '';
     const refresh_token = tokenData.refresh_token || '';
     const scope = tokenData.scope || '';
-    const issuer = await this.resolveIssuer(category);
-    const openid = await this.resolveOpenid(tokenData, client_id, issuer, body.nonce);
+    const issuer = await this.ucClient.resolveIssuer(category);
+    const openid = await this.ucClient.resolveOpenid(tokenData, client_id, issuer, body.nonce);
 
     if (!access_token || !openid) {
       throw Biz.internal('获取用户标识失败');
     }
 
     // Get user info from OAuth provider
-    const userInfo = await this.getUserInfo(oauthType, access_token, openid);
+    const userInfo = await this.ucClient.getUserInfo(oauthType, access_token, openid);
     this.logger.debug(`[OAuth] userInfo from provider: ${JSON.stringify(userInfo)}`);
 
     const nickname = userInfo.nickname || userInfo.name || userInfo.login || userInfo.display_name || '';
@@ -423,15 +400,15 @@ export class OauthService {
     const access_token = tokenData.access_token || '';
     const refresh_token = tokenData.refresh_token || '';
     const tokenScope = tokenData.scope || scope || '';
-    const issuer = await this.resolveIssuer(category);
-    const openid = await this.resolveOpenid(tokenData, client_id, issuer);
+    const issuer = await this.ucClient.resolveIssuer(category);
+    const openid = await this.ucClient.resolveOpenid(tokenData, client_id, issuer);
 
     if (!access_token || !openid) {
       throw Biz.internal('获取用户标识失败');
     }
 
     // 2. 获取 user-center 用户信息（name/email 按 scope 开放）
-    const userInfo = await this.getUserInfo(oauthType, access_token, openid);
+    const userInfo = await this.ucClient.getUserInfo(oauthType, access_token, openid);
 
     // 3. 匹配或创建 lib 本地用户，返回 { token, user }
     const loginResult = await this.matchOrCreateUser({
@@ -649,7 +626,7 @@ export class OauthService {
       throw Biz.internal('OAuth配置不完整');
     }
 
-    const tokenData = await this.exchangeCodeForToken(
+    const tokenData = await this.ucClient.exchangeCodeForToken(
       oauthType,
       code,
       client_id,
@@ -660,14 +637,14 @@ export class OauthService {
     const access_token = tokenData.access_token || '';
     const refresh_token = tokenData.refresh_token || '';
     const scope = tokenData.scope || '';
-    const issuer = await this.resolveIssuer(category);
-    const openid = await this.resolveOpenid(tokenData, client_id, issuer);
+    const issuer = await this.ucClient.resolveIssuer(category);
+    const openid = await this.ucClient.resolveOpenid(tokenData, client_id, issuer);
 
     if (!access_token || !openid) {
       throw Biz.internal('获取用户标识失败');
     }
 
-    const userInfo = await this.getUserInfo(oauthType, access_token, openid);
+    const userInfo = await this.ucClient.getUserInfo(oauthType, access_token, openid);
     const nickname = userInfo.nickname || userInfo.name || userInfo.login || '';
     const avatar = userInfo.avatar || userInfo.avatar_url || userInfo.picture || '';
     const unionid = userInfo.unionid || '';
@@ -704,201 +681,6 @@ export class OauthService {
   }
 
   /**
-   * 解析 OIDC issuer：优先取 discovery 的 issuer（与 Provider 一致），
-   * 为空则从 token_url 的 origin (+ /api/oauth 挂载前缀) 推导。
-   */
-  private async resolveIssuer(category: string): Promise<string> {
-    const disc = await this.discovery.discover(category);
-    const discovered = disc && disc.issuer;
-    if (discovered) return discovered;
-    const configured = this.config.get(category, 'issuer', '').trim();
-    if (configured) return configured;
-    const tokenUrl = this.config.get(category, 'token_url', '');
-    try {
-      const u = new URL(tokenUrl);
-      const prefix = /\/api\/oauth\/token/i.test(tokenUrl) ? '/api/oauth' : '';
-      return u.origin + prefix;
-    } catch {
-      return configured;
-    }
-  }
-
-  /**
-   * 身份解析：优先校验 id_token（JWKS 验 RS256 签名 + iss/aud/exp/nonce）取 sub，
-   * 否则回退到 access_token 解析的 openid/sub（旧 Provider 不签 id_token 时兼容）。
-   * id_token 存在但校验失败则硬失败，拒绝脆弱登录。
-   */
-  private async resolveOpenid(
-    tokenData: Record<string, string>,
-    client_id: string,
-    issuer: string,
-    nonce?: string,
-  ): Promise<string> {
-    if (tokenData.id_token) {
-      try {
-        const claims = await verifyIdToken(
-          tokenData.id_token,
-          client_id,
-          issuer,
-          (kid) => this.jwks.getPublicKey(kid),
-          nonce,
-        );
-        this.logger.debug(`[OIDC] id_token verified, sub=${String(claims.sub)}`);
-        return String(claims.sub || '');
-      } catch (e: any) {
-        throw Biz.internal(`[OIDC] ` + (e?.message || 'id_token 校验失败'));
-      }
-    }
-    return tokenData.openid || tokenData.sub || tokenData.id || '';
-  }
-
-  /**
-   * Exchange authorization code for access token
-   */
-  private async exchangeCodeForToken(
-    oauthType: number,
-    code: string,
-    client_id: string,
-    client_secret: string,
-    redirect_url: string,
-    codeVerifier?: string,
-  ): Promise<Record<string, string>> {
-    const category = OAUTH_TYPE_TO_CATEGORY[oauthType];
-
-    if (category === 'oauthCustom') {
-      const disc = await this.discovery.discover(category);
-      const token_url =
-        (disc && disc.token_endpoint) || this.config.get(category, 'token_url');
-      if (!token_url) {
-        throw Biz.internal('自定义OAuth未配置token_url（且 Discovery 未发现）');
-      }
-
-      const params = new URLSearchParams({
-        grant_type: 'authorization_code',
-        code,
-        client_id,
-        client_secret,
-        redirect_uri: redirect_url,
-      });
-
-      // Add code_verifier for PKCE
-      if (codeVerifier) {
-        params.set('code_verifier', codeVerifier);
-      }
-
-      const bodyStr = params.toString();
-      let response: Response | undefined;
-      let lastErr: any;
-      const maxRetries = 3;
-      for (let attempt = 1; attempt <= maxRetries; attempt++) {
-        try {
-          response = await fetch(token_url, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            body: bodyStr,
-          });
-          break;
-        } catch (err: any) {
-          lastErr = err;
-          console.error(`[OAuth] token fetch attempt ${attempt}/${maxRetries} failed:`, err.message);
-          if (attempt < maxRetries) {
-            await new Promise(r => setTimeout(r, 1000 * attempt));
-          }
-        }
-      }
-      if (!response) {
-        throw Biz.internal(`获取token网络错误(重试${maxRetries}次): ${lastErr?.message}`);
-      }
-
-      if (!response.ok) {
-        const errText = await response.text();
-        throw Biz.internal(`获取token失败: ${response.status} ${errText}`);
-      }
-
-      const data = await response.json();
-      this.logger.debug(
-        `[OAuth] token response data keys: ${Object.keys(data)} data: ${JSON.stringify(data)}`,
-      );
-
-      // Try to extract openid from JWT payload (sub field)
-      let openid = data.openid || data.sub || data.id || '';
-      if (!openid && data.access_token) {
-        try {
-          const parts = data.access_token.split('.');
-          if (parts.length === 3) {
-            const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString());
-            openid = payload.sub || payload.id || '';
-            this.logger.debug(`[OAuth] extracted openid from JWT payload: ${openid}`);
-          }
-        } catch (e) {
-          console.error('[OAuth] failed to decode JWT:', e);
-        }
-      }
-
-      return {
-        access_token: data.access_token || '',
-        refresh_token: data.refresh_token || '',
-        scope: data.scope || '',
-        openid,
-        id_token: data.id_token || '',
-      };
-    }
-
-    // 仅支持自定义 OAuth（SSO 接入 user-center）
-    throw Biz.invalidArgument('不支持的OAuth类型');
-  }
-
-  /**
-   * Get user info from OAuth provider
-   */
-  private async getUserInfo(
-    oauthType: number,
-    access_token: string,
-    openid: string,
-  ): Promise<Record<string, string>> {
-    const category = OAUTH_TYPE_TO_CATEGORY[oauthType];
-
-    if (category === 'oauthCustom') {
-      const disc = await this.discovery.discover(category);
-      const userinfo_url =
-        (disc && disc.userinfo_endpoint) || this.config.get(category, 'userinfo_url');
-      if (!userinfo_url) {
-        throw Biz.internal('自定义OAuth未配置userinfo_url（且 Discovery 未发现）');
-      }
-
-      let response: Response | undefined;
-      let lastErr: any;
-      const maxRetries = 3;
-      for (let attempt = 1; attempt <= maxRetries; attempt++) {
-        try {
-          response = await fetch(userinfo_url, {
-            headers: { Authorization: `Bearer ${access_token}` },
-          });
-          break;
-        } catch (err: any) {
-          lastErr = err;
-          console.error(`[OAuth] userinfo fetch attempt ${attempt}/${maxRetries} failed:`, err.message);
-          if (attempt < maxRetries) {
-            await new Promise(r => setTimeout(r, 1000 * attempt));
-          }
-        }
-      }
-      if (!response) {
-        throw Biz.internal(`获取用户信息网络错误(重试${maxRetries}次): ${lastErr?.message}`);
-      }
-
-      if (!response.ok) {
-        throw Biz.internal(`获取用户信息失败: ${response.status}`);
-      }
-
-      return await response.json();
-    }
-
-    // 仅支持自定义 OAuth（SSO 接入 user-center）
-    throw Biz.invalidArgument('不支持的OAuth类型');
-  }
-
-  /**
    * SSO：校验浏览器带入的 user-center 共享 access_token cookie（Cookie 真源）。
    * 用 user-center RS256 公钥校验其 JWT，提取 sub（user-center 用户标识）→ 经 UserOauth 绑定
    * 定位 lib 本地用户 → 签发 lib token。无 cookie / 校验失败 / 未绑定 → 静默返回 { valid:false }，不建账号。
@@ -931,7 +713,7 @@ export class OauthService {
       } else if (verify.expired) {
         const rt = this.readCookie(req, 'refresh_token');
         if (rt) {
-          const refresh = await this.tryRefreshUc(rt);
+          const refresh = await this.ucClient.tryRefreshUc(rt);
           if (refresh && refresh.status === 'ok') {
             refreshedTokens = {
               access_token: refresh.access_token,
@@ -976,7 +758,7 @@ export class OauthService {
       let phone = '';
       let ssoInfo: any = null;
       try {
-        const info: any = await this.getUserInfo(OAUTH_TYPE_CUSTOM, token, ucSubject);
+        const info: any = await this.ucClient.getUserInfo(OAUTH_TYPE_CUSTOM, token, ucSubject);
         ssoInfo = info;
         nickname = info?.nickname || info?.name || info?.login || '';
         avatar = info?.avatar || info?.avatar_url || info?.picture || '';
@@ -1026,7 +808,7 @@ export class OauthService {
 
     // 同步 user-center 学号到 lib 用户，保证「学号」展示真实值（失败不回退登录）
     try {
-      const info: any = await this.getUserInfo(OAUTH_TYPE_CUSTOM, token, ucSubject);
+      const info: any = await this.ucClient.getUserInfo(OAUTH_TYPE_CUSTOM, token, ucSubject);
       // 方案2：实时校验 user 状态，封禁/删除账号拒绝 SSO 登录
       if (info && !this.isUcUserActive(info)) {
         return { valid: false, reason: 'user-inactive' };
@@ -1091,64 +873,6 @@ export class OauthService {
   }
 
   /**
-   * 用父域 refresh_token 经 user-center /oauth/token 换新令牌，返回三态，供调用方区分：
-   * - ok         ：续期成功，返回新 access_token / refresh_token；
-   * - unreachable：网络失败 / 超时 / user-center 5xx（服务重启、网关错误）→ 无法确证，
-   *                 调用方应进入降级窗口而非硬登出，避免 user-center 瞬时故障时全员误登出；
-   * - rejected   ：user-center 可达且返回 4xx 业务拒绝（invalid_grant 等，令牌确证失效）
-   *                 或响应体缺少合法 access_token → 调用方应视为会话失效硬登出。
-   */
-  private async tryRefreshUc(
-    refreshToken: string,
-  ): Promise<
-    { status: 'ok'; access_token: string; refresh_token: string }
-    | { status: 'unreachable' }
-    | { status: 'rejected' }
-  > {
-    const category = OAUTH_TYPE_TO_CATEGORY[OAUTH_TYPE_CUSTOM];
-    const client_id = this.config.get(category, 'client_id');
-    const client_secret = this.config.get(category, 'client_secret');
-    const base = this.ucBase();
-    const params = new URLSearchParams({
-      grant_type: 'refresh_token',
-      refresh_token: refreshToken,
-      client_id,
-      client_secret,
-      scope: (this.config.get(category, 'scope') || 'openid profile email').trim(),
-    });
-    let response: Response | undefined;
-    try {
-      response = await fetch(`${base}/oauth/token`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: params.toString(),
-        signal: AbortSignal.timeout(8000),
-      });
-    } catch (e: any) {
-      console.warn('[SSO] uc refresh network fail:', e?.message);
-      return { status: 'unreachable' };
-    }
-    if (!response) return { status: 'unreachable' };
-    // 5xx 属 user-center 服务端错误（重启/网关/部署），非业务判定，视为不可达走降级，
-    // 与 4xx（确证失效）严格区分：前者不该导致全员硬登出。
-    const status = response.status;
-    if (status >= 500 && status <= 599) {
-      console.warn(`[SSO] uc refresh server error: ${status}`);
-      return { status: 'unreachable' };
-    }
-    const data: any = await response.json().catch(() => ({}));
-    // 2xx 且拿到合法 access_token → 成功；其余（4xx 拒绝 / 体缺失）→ 确证失效
-    if (status >= 200 && status < 300 && data?.access_token) {
-      return {
-        status: 'ok',
-        access_token: String(data.access_token),
-        refresh_token: String(data.refresh_token || ''),
-      };
-    }
-    return { status: 'rejected' };
-  }
-
-  /**
    * 向 user-center /auth/session-state 正向确认是否存在有效会话（OAuth/SSO 跨站 SLO）。
    * 把浏览器携带的共享 cookie（refresh_token 等，均在 .shanhe.co 域内）原样转发给 user-center，
    * 由其判定该身份是否仍在线。返回：
@@ -1158,7 +882,7 @@ export class OauthService {
    */
   private async probeUcSessionState(req: Request): Promise<boolean | null> {
     try {
-      const ucBase = this.ucBase();
+      const ucBase = this.ucClient.ucBase();
       const sessionStateUrl = `${ucBase.replace(/\/$/, '')}/auth/session-state`;
       const cookie = String(req.headers['cookie'] || '');
       const res = await fetch(sessionStateUrl, {

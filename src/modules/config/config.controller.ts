@@ -1,10 +1,6 @@
 import { Controller, Get, Put, Post, Body, Query } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, Repository, IsNull, In } from 'typeorm';
-import { execSync } from 'child_process';
-import * as os from 'os';
-import * as fs from 'fs';
-import * as path from 'path';
+import { Repository, In, DataSource } from 'typeorm';
 import {
   Config,
   Language,
@@ -20,7 +16,6 @@ import {
 import { Public } from '../../common/decorators/public.decorator';
 import { RequirePermission } from '../../common/decorators/permission.decorator';
 import { RequireRoot } from '../../common/decorators/root.decorator';
-import { RequireLogin } from '../../common/decorators/require-login.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { Biz } from '../../common/biz.exception';
 import { PermissionService } from '../../auth/permission.service';
@@ -28,6 +23,10 @@ import { ConfigService } from '../../config/config.service';
 import { MailService } from '../mail/mail.service';
 import { assertSafeOutboundUrl } from '../../common/url-guard.util';
 import { JwtUser } from '../../auth/jwt-user.type';
+import { ReleaseService } from './split/release.service';
+import { SitemapService } from './split/sitemap.service';
+import { StatsService } from './split/stats.service';
+import { SystemService } from './split/system.service';
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { version: APP_VERSION } = require('../../../package.json');
@@ -54,12 +53,12 @@ interface UpdateConfigBody {
   config?: Array<{ id?: number; name?: string; value?: string; category?: string }>;
 }
 
-/** /stats 统计缓存有效期（毫秒） */
-const STATS_TTL_MS = 30 * 1000;
-
 @Controller()
 export class ConfigController {
-  private readonly statsCache = new Map<string, { at: number; value: Record<string, number> }>();
+  private readonly releaseSvc: ReleaseService;
+  private readonly sitemapSvc: SitemapService;
+  private readonly statsSvc: StatsService;
+  private readonly systemSvc: SystemService;
 
   constructor(
     @InjectRepository(Config)
@@ -87,14 +86,38 @@ export class ConfigController {
     private readonly mailService: MailService,
     private readonly dataSource: DataSource,
   ) {
+    this.releaseSvc = new ReleaseService(this.configRepo, APP_VERSION);
+    this.sitemapSvc = new SitemapService(
+      this.documentRepo,
+      this.articleRepo,
+      this.categoryRepo,
+      this.configRepo,
+    );
+    this.statsSvc = new StatsService(
+      this.userRepo,
+      this.documentRepo,
+      this.articleRepo,
+      this.categoryRepo,
+      this.commentRepo,
+      this.bannerRepo,
+      this.friendlinkRepo,
+      this.reportRepo,
+      this.configService,
+      this.permissionService,
+      APP_VERSION,
+      APP_HASH,
+      APP_BUILD_AT,
+    );
+    this.systemSvc = new SystemService(this.dataSource);
+
     // 定时自动重建 sitemap：启动 5 分钟后首次生成，之后每天生成一次（兜底，手动按钮仍可用）
     setTimeout(() => {
-      this.updateSitemap().catch((err) =>
+      this.sitemapSvc.updateSitemap().catch((err) =>
         console.error('[sitemap] auto rebuild failed', err),
       );
     }, 5 * 60 * 1000);
     setInterval(() => {
-      this.updateSitemap().catch((err) =>
+      this.sitemapSvc.updateSitemap().catch((err) =>
         console.error('[sitemap] auto rebuild failed', err),
       );
     }, 24 * 3600 * 1000);
@@ -294,302 +317,57 @@ export class ConfigController {
   @Public()
   @Get('release')
   async getLatestRelease() {
-    return this.buildReleaseDto();
+    return this.releaseSvc.getLatestRelease();
   }
 
   @RequirePermission('/api.v1.ConfigAPI/UpdateConfig')
   @Post('release')
   async refreshLatestRelease() {
-    const info = await this.getReleaseInfo();
-    const source = info['source'] || 'auto';
-    const urls: string[] = [];
-    if (source === 'gitee') {
-      urls.push('https://gitee.com/api/v5/repos/mnt-ltd/moredoc/releases/latest');
-    } else if (source === 'github') {
-      urls.push('https://api.github.com/repos/mnt-ltd/moredoc/releases/latest');
-    } else if (source === 'auto') {
-      urls.push('https://gitee.com/api/v5/repos/mnt-ltd/moredoc/releases/latest');
-      urls.push('https://api.github.com/repos/mnt-ltd/moredoc/releases/latest');
-    } else {
-      throw Biz.internal('您未指定新版本检测来源，无法获取最新版本更新！');
-    }
-
-    let release: Record<string, string> | null = null;
-    let lastErr = '';
-    for (const url of urls) {
-      try {
-        release = await this.fetchLatestRelease(url);
-        if (release?.['tag_name']) break;
-      } catch (err) {
-        lastErr = err instanceof Error ? err.message : String(err);
-      }
-    }
-    if (!release?.['tag_name']) {
-      throw Biz.internal(lastErr || '获取最新版本更新失败！');
-    }
-
-    await this.saveRelease(release);
-    return this.buildReleaseDto();
+    return this.releaseSvc.refreshLatestRelease();
   }
 
   @RequirePermission('/api.v1.ConfigAPI/UpdateConfig')
   @Put('release/ignore')
   async ignoreRelease(@Body() body: { tag_name?: string }) {
-    await this.setReleaseConfigValue('ignore', body?.tag_name ?? '');
-    return {};
+    return this.releaseSvc.ignoreRelease(body);
   }
 
   @RequirePermission('/api.v1.ConfigAPI/UpdateConfig')
   @Put('release/source')
   async setReleaseSource(@Body() body: { source?: string }) {
-    await this.setReleaseConfigValue('source', body?.source ?? '');
-    return {};
+    return this.releaseSvc.setReleaseSource(body);
   }
 
   @Public()
   @Get('stats')
   async getStats(@CurrentUser() user?: JwtUser) {
-    // 统计数字非强实时，做 30 秒内存缓存，避免每次请求都跑 COUNT(*)
-    const base = await this.cachedCounts('base', async () => {
-      const [userCount, documentCount, articleCount] = await Promise.all([
-        this.userRepo.count(),
-        this.documentRepo.count(),
-        this.articleRepo.count(),
-      ]);
-      return { userCount, documentCount, articleCount };
-    });
-
-    // 虚拟注册数来自后台配置（内存缓存，保存后立即生效）
-    const virtualCount = this.configService.getInt('display', 'virtual_register_count', 0);
-
-    let adminCounts = {
-      categoryCount: 0,
-      commentCount: 0,
-      bannerCount: 0,
-      friendlinkCount: 0,
-      reportCount: 0,
-    };
-    if (await this.hasAccess(user, '/api.v1.ConfigAPI/GetStats')) {
-      adminCounts = await this.cachedCounts('admin', async () => {
-        const [categoryCount, commentCount, bannerCount, friendlinkCount, reportCount] =
-          await Promise.all([
-            this.categoryRepo.count(),
-            this.commentRepo.count(),
-            this.bannerRepo.count(),
-            this.friendlinkRepo.count(),
-            this.reportRepo.count(),
-          ]);
-        return { categoryCount, commentCount, bannerCount, friendlinkCount, reportCount };
-      });
-    }
-
-    return {
-      user_count: base.userCount + virtualCount,
-      document_count: base.documentCount,
-      category_count: adminCounts.categoryCount,
-      article_count: base.articleCount,
-      comment_count: adminCounts.commentCount,
-      banner_count: adminCounts.bannerCount,
-      friendlink_count: adminCounts.friendlinkCount,
-      report_count: adminCounts.reportCount,
-      os: `${os.type()} ${os.release()} ${os.arch()}`,
-      version: APP_VERSION,
-      hash: APP_HASH,
-      build_at: APP_BUILD_AT,
-    };
+    return this.statsSvc.getStats(user);
   }
 
   @RequireRoot()
   @Get('envs')
   async getEnvs() {
-    const envs = [
-      {
-        name: 'LibreOffice',
-        description: 'LibreOffice是由文档基金会开发的自由及开放源代码的办公套件。用于将office等文档转为pdf。',
-        cmd: 'soffice',
-        is_required: true,
-      },
-      {
-        name: 'Calibre',
-        description: 'calibre是一个自由开源的电子书软件套装。用于将epub、mobi等电子书转为pdf。',
-        cmd: 'ebook-convert',
-        is_required: true,
-      },
-      {
-        name: 'MuPDF',
-        description: 'MuPDF是一款以C语言编写的自由及开放源代码软件库，是PDF和XPS解析和渲染引擎。用于将PDF转为svg、png等图片。',
-        cmd: 'mutool',
-        is_required: false,
-      },
-      {
-        name: 'SVGO',
-        description: 'SVGO 是一个基于 Node.js 的工具，用于优化 SVG 矢量图形文件。魔豆文库用于压缩svg图片大小。',
-        cmd: 'svgo',
-        is_required: false,
-      },
-      {
-        name: 'Inkscape',
-        description: 'Inkscape是一个自由开源的矢量图形编辑器。在mupdf处理PDF出现兼容问题失败时，自动切换inkscape来处理。',
-        cmd: 'inkscape',
-        is_required: false,
-      },
-    ];
-
-    return {
-      envs: envs.map((env) => {
-        const is_installed = this.commandExists(env.cmd);
-        return {
-          name: env.name,
-          description: env.description,
-          is_installed,
-          cmd: env.cmd,
-          is_required: env.is_required,
-          version: is_installed ? this.getCommandVersion(env.cmd) : '',
-        };
-      }),
-    };
+    return this.systemSvc.getEnvs();
   }
 
   @RequirePermission('/api.v1.ConfigAPI/UpdateSitemap')
   @Put('sitemap')
   async updateSitemap() {
-    const domain = (await this.getConfigValue('system', 'domain')).replace(/\/+$/, '');
-    // 站点地图**只生成在后端本地磁盘**（不传 OSS），由 main.ts 的
-    // useStaticAssets(sitemapDir, { prefix: '/sitemap' }) 对外提供；
-    // 索引里的 loc 一律使用站点域名，前台再由 EdgeOne Pages Function 代理 /sitemap/*，
-    // 这样索引与子文件的地址都在站点域名下，爬虫无需跨域。
-    const sitemapBase = `${domain}/sitemap`;
-    const limit = 10000;
-    const indexes: Array<{ loc: string; lastmod: string }> = [];
-
-    let page = 1;
-    // 文档站点地图
-    for (;;) {
-      const documents = await this.documentRepo.find({
-        select: { id: true, updated_at: true, uuid: true },
-        where: { deleted_at: IsNull() },
-        order: { id: 'ASC' },
-        skip: (page - 1) * limit,
-        take: limit,
-      });
-      if (documents.length === 0) break;
-      const file = `sitemap/documents-${page}.xml`;
-      const now = new Date().toISOString();
-      const urls = documents.map((doc) => ({
-        loc: `${domain}/document/${doc.uuid}`,
-        lastmod: doc.updated_at ? doc.updated_at.toISOString() : now,
-        changefreq: 'weekly',
-        priority: '0.7',
-      }));
-      await this.putSitemapFile(file, this.buildSitemapXml(urls));
-      indexes.push({ loc: `${sitemapBase}/documents-${page}.xml`, lastmod: now });
-      page++;
-    }
-
-    page = 1;
-    // 文章站点地图
-    for (;;) {
-      const articles = await this.articleRepo.find({
-        select: { id: true, updated_at: true, identifier: true },
-        where: { deleted_at: IsNull() },
-        order: { id: 'ASC' },
-        skip: (page - 1) * limit,
-        take: limit,
-      });
-      if (articles.length === 0) break;
-      const file = `sitemap/articles-${page}.xml`;
-      const now = new Date().toISOString();
-      const urls = articles.map((article) => ({
-        loc: `${domain}/article/${article.identifier}`,
-        lastmod: article.updated_at ? article.updated_at.toISOString() : now,
-        changefreq: 'weekly',
-        priority: '0.7',
-      }));
-      await this.putSitemapFile(file, this.buildSitemapXml(urls));
-      indexes.push({ loc: `${sitemapBase}/articles-${page}.xml`, lastmod: now });
-      page++;
-    }
-
-    // 静态页面 sitemap：首页（最高权重）+ 已启用的分类
-    const now = new Date().toISOString();
-    const categories = await this.categoryRepo.find({
-      where: { enable: true },
-      select: { id: true, updated_at: true },
-    });
-    const pageUrls: Array<{
-      loc: string;
-      lastmod: string;
-      changefreq?: string;
-      priority?: string;
-    }> = [
-      { loc: `${domain}/`, lastmod: now, changefreq: 'daily', priority: '1.0' },
-      ...categories.map((c) => ({
-        loc: `${domain}/category/${c.id}`,
-        lastmod: c.updated_at ? c.updated_at.toISOString() : now,
-        changefreq: 'daily',
-        priority: '0.8',
-      })),
-    ];
-    await this.putSitemapFile('sitemap/pages.xml', this.buildSitemapXml(pageUrls));
-    indexes.push({ loc: `${sitemapBase}/pages.xml`, lastmod: now });
-
-    if (indexes.length > 0) {
-      await this.putSitemapFile('sitemap/sitemap.xml', this.buildSitemapIndexXml(indexes));
-    }
-    return {};
-  }
-
-  /**
-   * 写入站点地图文件：优先上传 OSS（线上 serverless 容器文件系统只读，本地写盘会失败），
-   * OSS 未启用时回退本地磁盘（保留本地静态托管能力）。
-   */
-  /**
-   * 写入站点地图文件——**只写后端本地磁盘**，不再上传 OSS。
-   *
-   * 为什么不再传 OSS：站点地图属于站点自身的产物，放在后端本地并由 /sitemap 静态暴露
-   * 即可，前台再经 EdgeOne Pages Function 代理；两处存放（本地 + OSS）会导致
-   * 「更新了却看不出变化」——新文件去了 OSS，而 /sitemap/ 读的是本地旧文件。
-   * 注意：serverless 只读文件系统下会写盘失败，此时应改用 OSS/对象存储方案。
-   */
-  private async putSitemapFile(relativePath: string, content: string): Promise<void> {
-    this.writeFile(relativePath, content);
+    return this.sitemapSvc.updateSitemap();
   }
 
   @RequireRoot()
   @RequirePermission('/api.v1.ConfigAPI/GetDeviceInfo')
   @Get('device')
   getDeviceInfo() {
-    const cpus = os.cpus();
-    const total = os.totalmem();
-    const free = os.freemem();
-    const used = total - free;
-
-    return {
-      cpu: {
-        cores: cpus.length,
-        model_name: cpus[0]?.model ?? '',
-        mhz: cpus[0]?.speed ?? 0,
-        percent: 0,
-      },
-      memory: {
-        total,
-        available: free,
-        used,
-        free,
-        percent: total > 0 ? (used / total) * 100 : 0,
-      },
-      disk: this.getDisk(),
-    };
+    return this.systemSvc.getDeviceInfo();
   }
 
   @RequireRoot()
   @RequirePermission('/api.v1.ConfigAPI/SetSQLMode')
   @Put('sqlmode')
   async setSQLMode() {
-    await this.dataSource.query(
-      "SET GLOBAL sql_mode = (SELECT REPLACE(@@sql_mode, 'ONLY_FULL_GROUP_BY', ''))",
-    );
-    return {};
+    return this.systemSvc.setSQLMode();
   }
 
   @RequireRoot()
@@ -689,98 +467,6 @@ export class ConfigController {
     }
   }
 
-  private async hasAccess(user: JwtUser | undefined, method: string): Promise<boolean> {
-    if (!user) return false;
-    return this.permissionService.check(user.userId, method);
-  }
-
-  /** 统计数字的短时缓存，key 维度：base（前台可见）/ admin（需权限） */
-  private async cachedCounts<T extends Record<string, number>>(
-    key: string,
-    loader: () => Promise<T>,
-  ): Promise<T> {
-    const now = Date.now();
-    const hit = this.statsCache.get(key);
-    if (hit && now - hit.at < STATS_TTL_MS) return hit.value as T;
-    const value = await loader();
-    this.statsCache.set(key, { at: now, value });
-    return value;
-  }
-
-  private async getReleaseInfo(): Promise<Record<string, string>> {
-    const rows = await this.configRepo.find({ where: { category: 'release' } });
-    const map: Record<string, string> = {};
-    for (const row of rows) map[row.name] = row.value ?? '';
-    return map;
-  }
-
-  private async buildReleaseDto() {
-    const map = await this.getReleaseInfo();
-    return {
-      tag_name: map['tag_name'] || APP_VERSION,
-      name: map['name'] ?? '',
-      body: map['body'] ?? '',
-      source: map['source'] ?? 'auto',
-      ignore: map['ignore'] ?? '',
-      release_at: map['release_at'] ?? '',
-      current: APP_VERSION,
-    };
-  }
-
-  private async setReleaseConfigValue(name: string, value: string) {
-    const rows = await this.configRepo.find({ where: { category: 'release', name } });
-    if (rows.length === 0) return;
-    await this.configRepo.update(
-      { category: 'release', name },
-      { value, updated_at: new Date() },
-    );
-  }
-
-  private async saveRelease(release: Record<string, string>) {
-    const updates: Array<{ name: string; value: string }> = [];
-    if (release['tag_name']) updates.push({ name: 'tag_name', value: release['tag_name'] });
-    if (release['name']) updates.push({ name: 'name', value: release['name'] });
-    if (release['body']) updates.push({ name: 'body', value: release['body'] });
-    const releaseAt = release['published_at'] || release['created_at'];
-    if (releaseAt) {
-      const d = new Date(releaseAt);
-      if (!Number.isNaN(d.getTime())) {
-        updates.push({
-          name: 'release_at',
-          value: d.toISOString().slice(0, 19).replace('T', ' '),
-        });
-      }
-    }
-
-    for (const u of updates) {
-      const exist = await this.configRepo.findOne({
-        where: { category: 'release', name: u.name },
-      });
-      if (!exist) continue;
-      await this.configRepo.update({ id: exist.id }, { value: u.value, updated_at: new Date() });
-    }
-  }
-
-  private async fetchLatestRelease(url: string): Promise<Record<string, string>> {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 8000);
-    try {
-      const resp = await fetch(url, {
-        headers: { Accept: 'application/json', 'User-Agent': 'moredoc' },
-        signal: controller.signal,
-      });
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      return (await resp.json()) as Record<string, string>;
-    } finally {
-      clearTimeout(timer);
-    }
-  }
-
-  private async getConfigValue(category: string, name: string): Promise<string> {
-    const row = await this.configRepo.findOne({ where: { category, name } });
-    return row?.value ?? '';
-  }
-
   private normalizeArray(value: string | string[] | undefined): string[] {
     if (value === undefined) return [];
     return Array.isArray(value) ? value.map(String) : [String(value)];
@@ -801,126 +487,5 @@ export class ConfigController {
       updated_at: cfg.updated_at,
       col_num: cfg.col_num,
     };
-  }
-
-  private commandExists(cmd: string): boolean {
-    try {
-      execSync(`command -v "${cmd}"`, { stdio: 'ignore' });
-      return true;
-    } catch {
-      // PATH 中找不到时，回退检查当前项目本地安装的 node_modules/.bin 命令
-      const local = path.join(process.cwd(), 'node_modules', '.bin', cmd);
-      return fs.existsSync(local);
-    }
-  }
-
-  private getCommandVersion(cmd: string): string {
-    for (const arg of ['--version', '-version', '-v']) {
-      try {
-        const out = execSync(`"${cmd}" ${arg} 2>&1`, {
-          encoding: 'utf8',
-          timeout: 5000,
-        }).trim();
-        if (out) return out.split('\n')[0].trim();
-      } catch {
-        // 尝试下一种参数形式
-      }
-    }
-    return '';
-  }
-
-  private getDisk(): Array<Record<string, unknown>> {
-    try {
-      // 使用 -P 强制 POSIX 输出（6 列），避免 macOS 默认多列格式导致挂载点解析错位
-      const out = execSync('df -kP', { encoding: 'utf8' });
-      const lines = out.trim().split('\n').slice(1);
-      const disks: Array<Record<string, unknown>> = [];
-      const seenTotals = new Set<number>();
-      for (const line of lines) {
-        const parts = line.trim().split(/\s+/);
-        if (parts.length < 6) continue;
-        const filesystem = parts[0];
-        // 仅保留真实块设备（/dev/xxx），过滤 devfs、tmpfs、map、proc、sysfs 等虚拟/内存文件系统
-        if (!filesystem.startsWith('/dev/')) continue;
-        const total = parseInt(parts[1], 10);
-        const used = parseInt(parts[2], 10);
-        const free = parseInt(parts[3], 10);
-        const percent = parseFloat(parts[4]);
-        if (Number.isNaN(total) || total <= 0) continue;
-        // macOS APFS 会把同一物理磁盘挂载为多个卷（total 一致），按容量去重，避免重复展示
-        if (seenTotals.has(total)) continue;
-        seenTotals.add(total);
-        disks.push({
-          disk_name: parts.slice(5).join(' '),
-          total: total * 1024,
-          used: used * 1024,
-          free: free * 1024,
-          percent: Number.isNaN(percent) ? 0 : percent,
-        });
-      }
-      return disks;
-    } catch {
-      return [];
-    }
-  }
-
-  private writeFile(relativePath: string, content: string) {
-    const fullPath = path.resolve(process.cwd(), relativePath);
-    fs.mkdirSync(path.dirname(fullPath), { recursive: true });
-    fs.writeFileSync(fullPath, content);
-  }
-
-  private buildSitemapXml(
-    urls: Array<{
-      loc: string;
-      lastmod: string;
-      changefreq?: string;
-      priority?: string;
-    }>,
-  ): string {
-    const lines = [
-      '<?xml version="1.0" encoding="UTF-8"?>',
-      '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">',
-    ];
-    for (const url of urls) {
-      lines.push(
-        '  <url>',
-        `    <loc>${this.escapeXml(url.loc)}</loc>`,
-        `    <lastmod>${this.escapeXml(url.lastmod)}</lastmod>`,
-        `    <changefreq>${url.changefreq || 'daily'}</changefreq>`,
-        `    <priority>${url.priority || '1.0'}</priority>`,
-        '  </url>',
-      );
-    }
-    lines.push('</urlset>');
-    return lines.join('\n');
-  }
-
-  private buildSitemapIndexXml(
-    indexes: Array<{ loc: string; lastmod: string }>,
-  ): string {
-    const lines = [
-      '<?xml version="1.0" encoding="UTF-8"?>',
-      '<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">',
-    ];
-    for (const item of indexes) {
-      lines.push(
-        '  <sitemap>',
-        `    <loc>${this.escapeXml(item.loc)}</loc>`,
-        `    <lastmod>${this.escapeXml(item.lastmod)}</lastmod>`,
-        '  </sitemap>',
-      );
-    }
-    lines.push('</sitemapindex>');
-    return lines.join('\n');
-  }
-
-  private escapeXml(value: string): string {
-    return String(value)
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&apos;');
   }
 }

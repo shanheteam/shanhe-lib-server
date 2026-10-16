@@ -2,8 +2,6 @@ import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository, EntityManager, In, MoreThanOrEqual, IsNull } from 'typeorm';
 import { JwtService } from '@nestjs/jwt';
-import * as fs from 'fs';
-import * as path from 'path';
 import * as crypto from 'crypto';
 import { v1 as uuidV1 } from 'uuid';
 import {
@@ -23,25 +21,18 @@ import {
 } from '../../entities';
 import { ConfigService } from '../../config/config.service';
 import { ConverterService } from '../converter/converter.service';
-import { OssService, contentTypeOf } from '../attachment/oss.service';
+import { OssService } from '../attachment/oss.service';
 import { Biz } from '../../common/biz.exception';
 import { asArray, positiveNumberArray, toBoolArray } from '../../common/query.util';
 import { sanitizeHttpUrl } from '../../common/url.util';
 import { tb } from '../../database/naming-strategy';
-
-export const DocumentStatus = {
-  Pending: 0, // 待转换
-  Converting: 1, // 转换中
-  Converted: 2, // 已转换
-  Failed: 3, // 转换失败
-  Disabled: 4, // 已禁用
-  RePending: 5, // 重新转换
-  PendingReview: 6, // 待审核
-  ReviewReject: 7, // 审核拒绝
-} as const;
-
-const AttachmentTypeDocument = 2;
-const CategoryTypeDocument = 0;
+import {
+  DocumentStatus,
+  AttachmentTypeDocument,
+  CategoryTypeDocument,
+} from './document.constant';
+import { ConversionWorkerService } from './split/conversion-worker.service';
+import { DownloadService } from './split/download.service';
 
 const ORDER_COLUMNS = [
   'id',
@@ -89,19 +80,9 @@ interface QueryDocumentsOptions {
 @Injectable()
 export class DocumentService implements OnModuleInit {
   private readonly logger = new Logger(DocumentService.name);
-  private converting = false;
   private timer: NodeJS.Timeout | null = null;
-  /**
-   * 存量迁移扫描的空转退避状态。
-   * 迁移查询的 `path NOT LIKE 'http%'` 走不了索引，队列清空后每次 tick（5 秒）都是一次全表扫描。
-   * 连续空扫时按 2 的幂拉长下一次扫描间隔（上限 5 分钟），一旦真的迁移了文件就立刻恢复每 tick 扫描。
-   * 与「按 MAX(attachment.id) 短路」的关键区别：退避只延后下一次扫描，绝不跳过任何待迁移文件
-   * ——即使期间有文档被后台审核置为 Converted（不新增附件、不改 updated_at），最多晚 5 分钟也会被扫到。
-   */
-  private migrateIdleStreak = 0;
-  private migrateNextScanAt = 0;
-  private static readonly TICK_INTERVAL_MS = 5000;
-  private static readonly MIGRATE_BACKOFF_MAX_MS = 5 * 60 * 1000;
+  private readonly conversionWorker: ConversionWorkerService;
+  private readonly downloadService: DownloadService;
 
   constructor(
     @InjectRepository(Document)
@@ -135,12 +116,31 @@ export class DocumentService implements OnModuleInit {
     private readonly ossService: OssService,
     private readonly jwtService: JwtService,
     private readonly dataSource: DataSource,
-  ) {}
+  ) {
+    this.conversionWorker = new ConversionWorkerService(
+      this.docRepo,
+      this.attachmentRepo,
+      this.docErrorRepo,
+      this.config,
+      this.converter,
+      this.ossService,
+      this.logger,
+    );
+    this.downloadService = new DownloadService(
+      this.downloadRepo,
+      this.downloadCodeRepo,
+      this.docRepo,
+      this.attachmentRepo,
+      this.config,
+      this.jwtService,
+      this.dataSource,
+    );
+  }
 
   onModuleInit() {
     // 后台转换轮询 worker，间隔 5 秒处理一个待转换文档
     this.timer = setInterval(() => {
-      void this.tick();
+      void this.conversionWorker.tick();
     }, 5000);
     this.timer.unref?.();
   }
@@ -909,177 +909,11 @@ export class DocumentService implements OnModuleInit {
   // ================== 下载 ==================
 
   async downloadDocument(id: number, userId: number, ip: string, downcode = ''): Promise<Record<string, any>> {
-    const cfgGuest = this.config.getBool('download', 'enable_guest_download', false);
-    if (userId <= 0 && !cfgGuest) {
-      throw Biz.unauthenticated('您未登录或您的登录已过期，请重新登录或刷新页面重试');
-    }
-
-    const timesEveryDay = this.config.getInt('download', 'times_every_day', 10);
-    const timesEveryIP = this.config.getInt('download', 'times_every_ip', 10);
-
-    const todayStart = new Date();
-    todayStart.setHours(0, 0, 0, 0);
-    const ipCount = await this.downloadRepo.count({ where: { ip, created_at: MoreThanOrEqual(todayStart) } });
-    if (ipCount >= timesEveryIP) {
-      throw Biz.permissionDenied(`您所在IP今日下载次数已达上限(${timesEveryIP})`);
-    }
-    if (userId > 0) {
-      const userCount = await this.downloadRepo.count({ where: { user_id: userId, created_at: MoreThanOrEqual(todayStart) } });
-      if (userCount >= timesEveryDay) {
-        throw Biz.permissionDenied(`您的账户今日下载次数已达上限(${timesEveryDay})`);
-      }
-    }
-
-    const doc = await this.docRepo.findOne({ where: { id } });
-    if (!doc || Number(doc.status) === DocumentStatus.Disabled) throw Biz.notFound('文档不存在');
-
-    if (Number(doc.price) > 0 && userId <= 0) {
-      throw Biz.permissionDenied('付费文档，请先登录再下载');
-    }
-
-    const attachment = await this.attachmentRepo.findOne({
-      where: { type: AttachmentTypeDocument, type_id: id },
-      order: { id: 'DESC' },
-    } as any);
-    if (!attachment) throw Biz.notFound('附件不存在');
-
-    const creditName = this.config.getCreditName();
-    const price = Number(doc.price);
-    const isOwner = Number(doc.user_id) === userId;
-    let isPay = price > 0 && !isOwner;
-
-    let needCredit = false;
-    if (!isOwner) {
-      if (await this.isOwnedDocument(userId, id)) {
-        isPay = false;
-      } else if (downcode) {
-        await this.consumeDownloadCode(downcode, userId, price);
-      } else if (price > 0) {
-        // 需要扣积分：余额校验与扣减放入下方事务，原子条件扣减杜绝并发超扣
-        needCredit = true;
-      }
-    }
-
-    // 扣积分（如需）、保存下载记录、下载计数自增放在同一事务内。
-    // 积分使用条件 UPDATE（credit_count >= price 才扣），并发请求无法同时通过余额校验。
-    const queryRunner = this.dataSource.createQueryRunner();
-    await queryRunner.connect();
-    await queryRunner.startTransaction();
-    try {
-      if (needCredit) {
-        const result = await queryRunner.manager
-          .createQueryBuilder()
-          .update(User)
-          .set({ credit_count: () => `credit_count - ${price}` })
-          .where('id = :userId AND credit_count >= :price', { userId, price })
-          .execute();
-        if ((result.affected || 0) === 0) {
-          throw Biz.permissionDenied(`${creditName}不足，无法下载`);
-        }
-      }
-
-      const down = queryRunner.manager.create(Download, {
-        user_id: userId,
-        document_id: id,
-        ip,
-        is_pay: isPay,
-        created_at: new Date(),
-        updated_at: new Date(),
-      });
-      await queryRunner.manager.save(down);
-      await queryRunner.manager.increment(Document, { id }, 'download_count', 1);
-
-      await queryRunner.commitTransaction();
-    } catch (e) {
-      await queryRunner.rollbackTransaction();
-      throw e;
-    } finally {
-      await queryRunner.release();
-    }
-
-    return { url: this.generateDownloadURL(doc, attachment.hash, id, userId, ip) };
-  }
-
-  private async isOwnedDocument(userId: number, documentId: number): Promise<boolean> {
-    if (userId <= 0) return false;
-    const duration = this.config.getInt('download', 'free_download_duration', 0);
-    if (duration <= 0) return false;
-    const since = new Date();
-    since.setDate(since.getDate() - duration);
-    const paid = await this.downloadRepo.findOne({
-      where: { user_id: userId, document_id: documentId, is_pay: true, created_at: MoreThanOrEqual(since) },
-      order: { id: 'DESC' },
-    });
-    return !!paid;
-  }
-
-  private async consumeDownloadCode(code: string, userId: number, price: number): Promise<void> {
-    if (!this.config.getBool('download', 'enable_code_download', false)) {
-      throw Biz.permissionDenied('下载码下载功能未启用');
-    }
-    const maxPrice = this.config.getInt('download', 'max_price', 0);
-    if (price > maxPrice) {
-      const creditName = this.config.getCreditName();
-      throw Biz.permissionDenied(`下载码只能免费下载价格不超过${maxPrice}${creditName}的文档`);
-    }
-    const normalized = String(code).trim();
-    if (!normalized) throw Biz.invalidArgument('请输入您的下载码');
-
-    const result = await this.downloadCodeRepo
-      .createQueryBuilder()
-      .update(DownloadCode)
-      .set({ status: 1, user_id: userId, used_at: new Date(), updated_at: new Date() })
-      .where('code = :code AND status = 0', { code: normalized })
-      .execute();
-    const affected = result.affected || 0;
-
-    if (affected === 0) {
-      const item = await this.downloadCodeRepo.findOne({ where: { code: normalized } });
-      if (!item) throw Biz.notFound('下载码不存在');
-      throw Biz.permissionDenied('下载码已使用');
-    }
+    return this.downloadService.downloadDocument(id, userId, ip, downcode);
   }
 
   async downloadDocumentToBeReviewed(id: number, userId: number, ip: string): Promise<Record<string, any>> {
-    const doc = await this.docRepo.findOne({ where: { id } });
-    if (
-      !doc ||
-      !(
-        Number(doc.status) === DocumentStatus.Disabled ||
-        Number(doc.status) === DocumentStatus.PendingReview ||
-        Number(doc.status) === DocumentStatus.ReviewReject
-      )
-    ) {
-      throw Biz.notFound('下载失败：文档不存在，或文档不属于待审、审核拒绝或禁用状态');
-    }
-    const attachment = await this.attachmentRepo.findOne({
-      where: { type: AttachmentTypeDocument, type_id: id },
-      order: { id: 'DESC' },
-    } as any);
-    if (!attachment) throw Biz.notFound('附件不存在');
-
-    const down = this.downloadRepo.create({
-      user_id: userId,
-      document_id: id,
-      ip,
-      is_pay: false,
-      created_at: new Date(),
-      updated_at: new Date(),
-    });
-    await this.downloadRepo.save(down);
-
-    return { url: this.generateDownloadURL(doc, attachment.hash, id, userId, ip) };
-  }
-
-  private generateDownloadURL(doc: Document, hash: string, documentId: number, userId: number, ip: string): string {
-    const secretKey = this.config.getDownloadSecret();
-    const urlDuration = this.config.getInt('download', 'url_duration', 60);
-    const jti = `${userId}.${hash}.${documentId}`;
-    // ip 放入 payload 而非 jti：IPv4 含点号，拼进 jti 会破坏 `.` 分隔解析。
-    // 下载链接与领取 IP 绑定，转发他人后路由校验 IP 不一致即失效。
-    const token = this.jwtService.sign({ ip }, { secret: secretKey, expiresIn: urlDuration, jwtid: jti });
-    const filename = encodeURIComponent(String(doc.title) + String(doc.ext || ''));
-    return `/download/${token}?user_id=${userId}&document_id=${documentId}&filename=${filename}`;
+    return this.downloadService.downloadDocumentToBeReviewed(id, userId, ip);
   }
 
   // ================== 评分 ==================
@@ -1333,7 +1167,7 @@ export class DocumentService implements OnModuleInit {
     }
   }
 
-  // ================== 转换流水线 ==================
+  // ================== 查询辅助工具 ==================
 
   private async attachmentHashMap(docIds: number[]): Promise<Map<number, string>> {
     const map = new Map<number, string>();
@@ -1358,337 +1192,4 @@ export class DocumentService implements OnModuleInit {
     return [start, isNaN(end.getTime()) ? new Date() : end];
   }
 
-  private makeWorkspace(): string {
-    const dir = path.resolve(process.cwd(), 'cache/convert', new Date().toISOString().slice(0, 10), uuidV1());
-    fs.mkdirSync(dir, { recursive: true });
-    return dir;
-  }
-
-  private cleanup(workspace: string): void {
-    try {
-      fs.rmSync(workspace, { recursive: true, force: true });
-    } catch (e) {
-      this.logger.warn(`清理临时目录失败：${(e as Error).message}`);
-    }
-  }
-
-  private async setConvertError(documentId: number, err: Error): Promise<void> {
-    const exist = await this.docErrorRepo.findOne({ where: { id: documentId } });
-    if (exist) {
-      await this.docErrorRepo.update(documentId, { message: err.message });
-    } else {
-      await this.docErrorRepo.save({
-        id: documentId,
-        message: err.message,
-        created_at: new Date(),
-        updated_at: new Date(),
-      } as any);
-    }
-  }
-
-  private async clearConvertError(documentId: number): Promise<void> {
-    await this.docErrorRepo.delete(documentId);
-  }
-
-  private async tick(): Promise<void> {
-    if (this.converting) return;
-    this.converting = true;
-    try {
-      // 优先处理待转换文档；无待转换任务时，尝试迁移存量本地文档到 OSS
-      if (!(await this.convertNextDocument())) {
-        await this.maybeMigrateNextDocument();
-      }
-    } catch (e) {
-      this.logger.error(`转换 worker 异常：${(e as Error).message}`);
-    } finally {
-      this.converting = false;
-    }
-  }
-
-  /** 按空转退避节奏执行存量迁移扫描：有进展立即恢复每 tick 扫描，连续空扫则逐步拉长间隔。 */
-  private async maybeMigrateNextDocument(): Promise<void> {
-    if (Date.now() < this.migrateNextScanAt) return;
-    const migrated = await this.migrateNextDocument();
-    if (migrated) {
-      this.migrateIdleStreak = 0;
-      this.migrateNextScanAt = 0;
-      return;
-    }
-    this.migrateIdleStreak = Math.min(this.migrateIdleStreak + 1, 10);
-    const backoff = Math.min(
-      DocumentService.TICK_INTERVAL_MS * 2 ** this.migrateIdleStreak,
-      DocumentService.MIGRATE_BACKOFF_MAX_MS,
-    );
-    this.migrateNextScanAt = Date.now() + backoff;
-  }
-
-  private async convertNextDocument(): Promise<boolean> {
-    // 原先写作 `status IN (0,5) ORDER BY id ASC LIMIT 1`：队列为空时 MySQL 常常选择
-    // 沿主键顺序扫描并逐行过滤 status（避免 filesort），退化为全表级扫描，而它每 5 秒跑一次。
-    // 现拆成两次「单一 status + ORDER BY id」的查询，各自都能用 idx_status_id 直接取有序首行，
-    // 再取两者中 id 较小者 —— 与原语义（全局最早的一条）完全一致。
-    //
-    // 刻意**不**给这条路径加退避：转换是上传后用户可见的流程，
-    // 若照搬存量迁移那套最长 5 分钟的退避，用户上传后要等数分钟才会开始转换。
-    const [pending, rePending] = await Promise.all([
-      this.docRepo.findOne({
-        where: { status: DocumentStatus.Pending },
-        order: { id: 'ASC' },
-        select: { id: true },
-      }),
-      this.docRepo.findOne({
-        where: { status: DocumentStatus.RePending },
-        order: { id: 'ASC' },
-        select: { id: true },
-      }),
-    ]);
-
-    const candidates = [pending?.id, rePending?.id]
-      .map((v) => Number(v))
-      .filter((v) => Number.isFinite(v) && v > 0);
-    if (candidates.length === 0) return false;
-
-    const doc = await this.docRepo.findOne({ where: { id: Math.min(...candidates) } });
-    if (!doc) return false;
-    await this.handleDocument(doc);
-    return true;
-  }
-
-  /** 存量迁移：将已转换但仅存本地的文档附件（原文件+预览页+封面）上传到 OSS 并清理本地。 */
-  /**
-   * 迁移一篇存量本地文档到 OSS。返回「本次是否真正处理了文件」。
-   * 注意：查询里 `path NOT LIKE 'http%'` 无法走索引（attachment 上也没有 path 索引），
-   * 队列为空时每次调用都是一次全表扫描，故调用方 tick() 会按空转情况逐步退避。
-   */
-  private async migrateNextDocument(): Promise<boolean> {
-    if (!this.ossService.isEnabled()) return false;
-    const attachment = await this.attachmentRepo
-      .createQueryBuilder('a')
-      .innerJoin(Document, 'd', 'd.id = a.type_id')
-      .where('a.type = :type', { type: AttachmentTypeDocument })
-      .andWhere('a.path NOT LIKE :http', { http: 'http%' })
-      .andWhere('d.status = :status', { status: DocumentStatus.Converted })
-      .andWhere('d.deleted_at IS NULL')
-      .orderBy('a.id', 'ASC')
-      .take(1)
-      .getOne();
-    if (!attachment) return false;
-
-    const hash = String(attachment.hash || '');
-    const ext = String(attachment.ext || '').toLowerCase();
-    const relPath = String(attachment.path || '').replace(/^\/+/, '');
-    if (!hash || !relPath) {
-      this.logger.warn(`存量迁移跳过（attachment_id=${attachment.id}）：附件路径或 hash 无效`);
-      return false;
-    }
-    const srcPath = path.resolve(process.cwd(), relPath);
-    if (!fs.existsSync(srcPath)) {
-      this.logger.warn(`存量迁移跳过（attachment_id=${attachment.id}）：本地原文件不存在`);
-      return false;
-    }
-    const srcExt = path.extname(srcPath);
-    const baseDir = srcPath.slice(0, srcPath.length - srcExt.length);
-    await this.uploadDocumentFilesToOss(attachment, srcPath, baseDir);
-    return true;
-  }
-
-  private async handleDocument(doc: Document): Promise<void> {
-    const documentId = Number(doc.id);
-    await this.docRepo.update(documentId, { status: DocumentStatus.Converting });
-
-    const attachment = await this.attachmentRepo.findOne({
-      where: { type: AttachmentTypeDocument, type_id: documentId },
-      order: { id: 'DESC' },
-    } as any);
-
-    if (!attachment) {
-      await this.docRepo.update(documentId, { status: DocumentStatus.Failed });
-      await this.setConvertError(documentId, new Error('文档附件不存在'));
-      return;
-    }
-
-    const hash = String(attachment.hash || '');
-    const ext = String(attachment.ext || '').toLowerCase();
-    const ossEnabled = this.ossService.isEnabled();
-    const workspace = this.makeWorkspace();
-
-    // 定位本地原文件；若本地缺失（如 OSS 上传后本地已清理、再次重新转换），从 OSS 下载到工作区
-    const relPath = String(attachment.path || '').replace(/^\/+/, '');
-    const srcPath = path.resolve(process.cwd(), relPath);
-    let localSrc = srcPath;
-    if (!relPath || !fs.existsSync(srcPath)) {
-      if (!ossEnabled || !hash) {
-        await this.docRepo.update(documentId, { status: DocumentStatus.Failed });
-        await this.setConvertError(documentId, new Error('文档原文件不存在'));
-        return;
-      }
-      try {
-        const buf = await this.ossService.get(OssService.documentKey(hash, ext));
-        localSrc = path.join(workspace, `${hash}${ext}`);
-        fs.writeFileSync(localSrc, buf);
-      } catch (e) {
-        await this.docRepo.update(documentId, { status: DocumentStatus.Failed });
-        await this.setConvertError(documentId, new Error(`从 OSS 下载原文件失败：${(e as Error).message}`));
-        return;
-      }
-    }
-
-    const srcExt = path.extname(localSrc);
-    const baseDir = localSrc.slice(0, localSrc.length - srcExt.length);
-    const coverPath = path.join(baseDir, 'cover.png');
-    fs.mkdirSync(baseDir, { recursive: true });
-
-    const cfgExtension = (this.config.get('converter', 'extension', 'webp') || 'webp').toLowerCase();
-    const cfgEnableGzip = this.config.getBool('converter', 'enable_gzip', true);
-    const cfgMaxPreview = this.config.getInt('converter', 'max_preview', 0);
-    const cfgMaxPercent = this.config.getInt('converter', 'max_preview_percent', 100);
-
-    try {
-      const dstPDF = await this.converter.convertToPDF(localSrc, workspace);
-      const pages = await this.converter.countPDFPages(dstPDF);
-      if (pages <= 0) throw new Error('统计PDF页数失败');
-
-      let maxPreview = cfgMaxPreview;
-      if (cfgMaxPercent > 0 && cfgMaxPercent < 100) {
-        let maxPreview2 = Math.ceil((pages * cfgMaxPercent) / 100);
-        if (maxPreview2 < 1) maxPreview2 = 1;
-        if (maxPreview2 < maxPreview) maxPreview = maxPreview2;
-      }
-      let preview = maxPreview;
-      if (pages < preview) preview = pages;
-
-      let toPage = pages;
-      if (maxPreview > 0) toPage = maxPreview;
-      if (toPage > pages && pages > 0) toPage = pages;
-
-      const ext2 = `.${cfgExtension}`;
-      const pageList = await this.converter.convertPDFToPages(dstPDF, workspace, 1, toPage, ext2);
-      if (!pageList || pageList.length === 0) throw new Error('文档预览页转换失败');
-
-      const isSvg = cfgExtension === 'svg';
-      const gzipExt = isSvg && cfgEnableGzip;
-      const finalExt = gzipExt ? '.gzip.svg' : ext2;
-
-      // 生成封面（取第一页）
-      if (pageList.length > 0) {
-        try {
-          await this.converter.generateCover(pageList[0].page_path, coverPath);
-        } catch (e) {
-          this.logger.warn(`生成封面失败：${(e as Error).message}`);
-        }
-      }
-
-      // 复制预览页到最终目录
-      for (const page of pageList) {
-        const finalPath = path.join(baseDir, `${page.page_num}${finalExt}`);
-        if (gzipExt) {
-          const gz = this.converter.compressSVGByGZIP(page.page_path);
-          fs.copyFileSync(gz, finalPath);
-        } else {
-          fs.copyFileSync(page.page_path, finalPath);
-        }
-      }
-
-      // 转换成功后：原文件 + 预览页 + 封面上传 OSS，成功后清理本地；失败自动回退本地
-      if (ossEnabled && hash) {
-        await this.uploadDocumentFilesToOss(attachment, localSrc, baseDir);
-      }
-
-      await this.docRepo.update(documentId, {
-        pages,
-        preview,
-        status: DocumentStatus.Converted,
-        enable_gzip: gzipExt,
-        preview_ext: isSvg ? '.svg' : ext2,
-        updated_at: new Date(),
-      });
-      await this.clearConvertError(documentId);
-    } catch (e) {
-      this.logger.error(`文档转换失败（id=${documentId}）：${(e as Error).message}`);
-      await this.docRepo.update(documentId, { status: DocumentStatus.Failed });
-      await this.setConvertError(documentId, e as Error);
-    } finally {
-      this.cleanup(workspace);
-    }
-  }
-
-  /**
-   * 将文档本地文件（原文件 + 预览页 + 封面）上传到 OSS。
-   * 全部成功后：更新附件 path 为 OSS 外链，再清理本地文件；任一失败则保留本地（自动回退）。
-   */
-  private async uploadDocumentFilesToOss(
-    attachment: Attachment,
-    srcPath: string,
-    baseDir: string,
-  ): Promise<void> {
-    const hash = String(attachment.hash || '');
-    const ext = String(attachment.ext || '').toLowerCase();
-    if (!hash) return;
-
-    const coverPath = path.join(baseDir, 'cover.png');
-    const uploads: Array<{
-      key: string;
-      file: string;
-      contentType: string;
-      contentEncoding?: string;
-    }> = [];
-
-    if (fs.existsSync(srcPath)) {
-      uploads.push({
-        key: OssService.documentKey(hash, ext),
-        file: srcPath,
-        contentType: contentTypeOf(ext),
-      });
-    }
-    if (fs.existsSync(baseDir)) {
-      for (const f of fs.readdirSync(baseDir)) {
-        const abs = path.join(baseDir, f);
-        let stat: fs.Stats;
-        try {
-          stat = fs.statSync(abs);
-        } catch {
-          continue;
-        }
-        if (!stat.isFile() || f.toLowerCase() === 'cover.png') continue;
-        const lower = f.toLowerCase();
-        const gzip = lower.endsWith('.gzip.svg');
-        uploads.push({
-          key: OssService.pageKey(hash, f),
-          file: abs,
-          contentType: gzip ? 'image/svg+xml' : contentTypeOf(path.extname(f)),
-          contentEncoding: gzip ? 'gzip' : undefined,
-        });
-      }
-    }
-    if (fs.existsSync(coverPath)) {
-      uploads.push({ key: OssService.coverKey(hash), file: coverPath, contentType: 'image/png' });
-    }
-    if (uploads.length === 0) return;
-
-    try {
-      for (const u of uploads) {
-        await this.ossService.put(
-          u.key,
-          fs.readFileSync(u.file),
-          u.contentType,
-          u.contentEncoding ? { contentEncoding: u.contentEncoding } : {},
-        );
-      }
-      // 全部成功：先更新附件外链，再清理本地文件
-      await this.attachmentRepo.update(attachment.id, {
-        path: this.ossService.buildUrl(OssService.documentKey(hash, ext)),
-        updated_at: new Date(),
-      });
-      const documentsAbs = path.resolve(process.cwd(), 'documents');
-      try {
-        if (fs.existsSync(srcPath)) fs.unlinkSync(srcPath);
-        if (baseDir.startsWith(documentsAbs)) fs.rmSync(baseDir, { recursive: true, force: true });
-      } catch (e) {
-        this.logger.warn(`清理本地文件失败：${(e as Error).message}`);
-      }
-      this.logger.log(`文档附件已上传 OSS（attachment_id=${attachment.id}, hash=${hash.slice(0, 8)}…）`);
-    } catch (e) {
-      this.logger.warn(`文档 OSS 上传失败，回退本地存储（attachment_id=${attachment.id}）：${(e as Error).message}`);
-    }
-  }
 }
