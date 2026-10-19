@@ -34,6 +34,7 @@ import { Order } from './order.entity';
 import { Sms } from './sms.entity';
 import { UserVip } from './user-vip.entity';
 import { UserOauth } from './user-oauth.entity';
+import { UcCreditConsume } from './uc-credit-consume.entity';
 
 export const entities = [
   User,
@@ -73,6 +74,7 @@ export const entities = [
   Sms,
   UserVip,
   UserOauth,
+  UcCreditConsume,
 ];
 
 export {
@@ -113,4 +115,5 @@ export {
   Sms,
   UserVip,
   UserOauth,
+  UcCreditConsume,
 };

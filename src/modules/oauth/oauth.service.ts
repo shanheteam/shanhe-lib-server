@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { User, UserGroup, Group, UserOauth } from '../../entities';
+import { User, UserGroup, Group, UserOauth, UcCreditConsume } from '../../entities';
 import { ConfigService } from '../../config/config.service';
 import { JwtService } from '@nestjs/jwt';
 import { Request } from 'express';
@@ -879,6 +879,110 @@ export class OauthService {
       credit_count: Number(user.credit_count) || 0,
       credit_name: this.config.getCreditName(),
     };
+  }
+
+  /**
+   * 金币消费：user-center 发起消费时由其后端带共享 access_token cookie 服务端转发调用。
+   *
+   * 幂等 + 原子扣减：以 request_id 为幂等键（唯一索引），重复提交只扣一次；
+   * 扣减用事务内条件 UPDATE（credit_count >= amount 才扣），并发下不会超扣；
+   * 扣减与写流水同事务，流水插入冲突则整体回滚后回读既有流水按幂等命中返回。
+   * 返回 credit_count 为扣减后余额（幂等命中时回放首次结果）。
+   */
+  async consumeCredit(req: Request, body: any): Promise<Record<string, unknown>> {
+    const amount = Number(body?.amount);
+    if (!Number.isInteger(amount) || amount <= 0 || amount > 1_000_000) {
+      return { valid: false, reason: 'invalid-amount' };
+    }
+    const requestId = String(body?.request_id || '').trim();
+    if (!requestId || requestId.length > 64) {
+      return { valid: false, reason: 'invalid-request-id' };
+    }
+    const reason = String(body?.reason || '').slice(0, 255);
+    const creditName = this.config.getCreditName();
+
+    const token = this.readCookie(req, 'access_token');
+    if (!token) return { valid: false, reason: 'no-cookie' };
+
+    const verify = await this.verifyUcToken(token);
+    if (!verify.ok || !verify.payload) {
+      return { valid: false, reason: verify.unreachable ? 'unreachable' : 'invalid-token' };
+    }
+
+    const ucSubject = String(verify.payload?.sub || verify.payload?.openid || '');
+    if (!ucSubject) return { valid: false, reason: 'no-sub' };
+
+    const binding = await this.userOauthRepo.findOne({
+      where: { oauth_type: OAUTH_TYPE_CUSTOM, openid: ucSubject },
+      select: { id: true, user_id: true },
+    });
+    if (!binding) return { valid: false, reason: 'not-bound' };
+    const userId = Number(binding.user_id);
+
+    try {
+      return await this.userRepo.manager.transaction(async (manager) => {
+        const existed = await manager.findOne(UcCreditConsume, {
+          where: { request_id: requestId },
+        });
+        if (existed) {
+          return {
+            valid: true,
+            duplicated: true,
+            credit_count: Number(existed.balance_after) || 0,
+            credit_name: creditName,
+          };
+        }
+
+        const result = await manager
+          .createQueryBuilder()
+          .update(User)
+          .set({ credit_count: () => `credit_count - ${amount}` })
+          .where('id = :userId AND credit_count >= :amount', { userId, amount })
+          .execute();
+        if ((result.affected || 0) === 0) {
+          return { valid: false, reason: 'insufficient', credit_name: creditName };
+        }
+
+        const after = await manager.findOne(User, {
+          where: { id: userId },
+          select: { credit_count: true },
+        });
+        const balanceAfter = Number(after?.credit_count) || 0;
+        await manager.insert(UcCreditConsume, {
+          user_id: userId,
+          uc_sub: ucSubject,
+          request_id: requestId,
+          amount,
+          reason,
+          balance_after: balanceAfter,
+          created_at: new Date(),
+        });
+        return { valid: true, credit_count: balanceAfter, credit_name: creditName };
+      });
+    } catch (e) {
+      // request_id 唯一冲突：并发重复提交（扣减已随事务回滚），回读既有流水按幂等命中返回
+      if (this.isDuplicateKeyError(e)) {
+        const existed = await this.userRepo.manager.findOne(UcCreditConsume, {
+          where: { request_id: requestId },
+        });
+        if (existed) {
+          return {
+            valid: true,
+            duplicated: true,
+            credit_count: Number(existed.balance_after) || 0,
+            credit_name: creditName,
+          };
+        }
+        return { valid: false, reason: 'conflict' };
+      }
+      throw e;
+    }
+  }
+
+  /** 判断是否为唯一键冲突（MySQL ER_DUP_ENTRY / SQLite SQLITE_CONSTRAINT） */
+  private isDuplicateKeyError(e: unknown): boolean {
+    const code = (e as any)?.code || (e as any)?.driverError?.code;
+    return code === 'ER_DUP_ENTRY' || code === 'SQLITE_CONSTRAINT';
   }
 
   /** 用 user-center JWKS 公钥校验其 access_token，并区分「签名有效但过期」与「IdP 不可达」。 */

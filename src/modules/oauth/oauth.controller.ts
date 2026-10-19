@@ -122,6 +122,18 @@ export class OauthController {
   }
 
   /**
+   * 金币消费：user-center 发起消费时由其后端带共享 access_token cookie 服务端转发调用，
+   * 按 request_id 幂等、事务内原子条件扣减（余额不足不扣）并写入消费流水。
+   */
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
+  @Public()
+  @Post('credit/consume')
+  @Header('Cache-Control', 'no-store')
+  consumeCredit(@Body() body: any, @Req() req: Request) {
+    return this.oauthService.consumeCredit(req, body);
+  }
+
+  /**
    * 续期结果回写父域 cookie：仅当后端做了静默续期（ssoSession 返回 refresh）时，
    * 把新 access_token 与新 refresh_token（轮换后）落到 .shanhe.co。
    * 原始令牌只用于写 cookie，绝不返回给前端（delete ret.refresh）。
