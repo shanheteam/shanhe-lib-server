@@ -844,6 +844,43 @@ export class OauthService {
     return ret;
   }
 
+  /**
+   * 金币余额（轻量只读）：读浏览器带入的 user-center 共享 access_token cookie，
+   * 校验通过后经 UserOauth 绑定定位 lib 本地用户，返回 credit_count 与展示名。
+   * 供 user-center 展示"金币"用（user-center 后端带该 cookie 服务端转发调用）。
+   * 不做续期/建号/状态同步等副作用，任何异常一律 valid:false，调用方按"取不到"处理。
+   */
+  async getCreditBalance(req: Request): Promise<Record<string, unknown>> {
+    const token = this.readCookie(req, 'access_token');
+    if (!token) return { valid: false, reason: 'no-cookie' };
+
+    const verify = await this.verifyUcToken(token);
+    if (!verify.ok || !verify.payload) {
+      return { valid: false, reason: verify.unreachable ? 'unreachable' : 'invalid-token' };
+    }
+
+    const ucSubject = String(verify.payload?.sub || verify.payload?.openid || '');
+    if (!ucSubject) return { valid: false, reason: 'no-sub' };
+
+    const binding = await this.userOauthRepo.findOne({
+      where: { oauth_type: OAUTH_TYPE_CUSTOM, openid: ucSubject },
+      select: { id: true, user_id: true },
+    });
+    if (!binding) return { valid: false, reason: 'not-bound' };
+
+    const user = await this.userRepo.findOne({
+      where: { id: binding.user_id },
+      select: { id: true, credit_count: true },
+    });
+    if (!user) return { valid: false, reason: 'no-user' };
+
+    return {
+      valid: true,
+      credit_count: Number(user.credit_count) || 0,
+      credit_name: this.config.getCreditName(),
+    };
+  }
+
   /** 用 user-center JWKS 公钥校验其 access_token，并区分「签名有效但过期」与「IdP 不可达」。 */
   private async verifyUcToken(
     token: string,
