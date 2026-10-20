@@ -6,11 +6,13 @@ import { OauthController } from './oauth.controller';
 import { OauthService } from './oauth.service';
 import { JwksService } from './jwks.service';
 import { OidcDiscoveryService } from './oidc-discovery.service';
+import { CreditModule } from '../credit/credit.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([User, UserGroup, Group, UserOauth]),
     JwtModule.register({}),
+    CreditModule,
   ],
   controllers: [OauthController],
   providers: [OauthService, JwksService, OidcDiscoveryService],

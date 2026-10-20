@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { EntityManager, Repository } from 'typeorm';
 import {
@@ -9,9 +9,11 @@ import {
   Punishment,
   User,
   UserGroup,
+  CreditLogType,
 } from '../../entities';
 import { ConfigService } from '../../config/config.service';
 import { CaptchaService } from '../captcha/captcha.service';
+import { CreditService } from '../credit/credit.service';
 import { Biz } from '../../common/biz.exception';
 import { isUserInPunishing } from '../../common/punishment.util';
 
@@ -24,6 +26,8 @@ const PUNISHMENT_COMMENT_LIMITED = 2;
 
 @Injectable()
 export class CommentService {
+  private readonly logger = new Logger(CommentService.name);
+
   constructor(
     @InjectRepository(Comment)
     private readonly commentRepo: Repository<Comment>,
@@ -39,6 +43,7 @@ export class CommentService {
     private readonly punishmentRepo: Repository<Punishment>,
     private readonly config: ConfigService,
     private readonly captchaService: CaptchaService,
+    private readonly credit: CreditService,
   ) {}
 
   /** 校验用户是否可以评论，否则抛出业务异常。 */
@@ -134,6 +139,29 @@ export class CommentService {
         await manager.increment(Comment, { id: parentId }, 'comment_count', 1);
       }
     });
+
+    // 文档被评论奖励：发放给文档作者，跳过自己评论自己的文档
+    if (type !== 1) {
+      const doc = await this.documentRepo.findOne({
+        where: { id: documentId },
+        select: { id: true, user_id: true },
+      });
+      const authorId = Number(doc?.user_id) || 0;
+      if (authorId > 0 && authorId !== userId) {
+        try {
+          await this.credit.grantDaily(
+            authorId,
+            CreditLogType.DocumentCommented,
+            this.config.getInt('score', 'document_commented', 0),
+            this.config.getInt('score', 'document_commented_limit', 0),
+            '文档被评论奖励',
+            documentId,
+          );
+        } catch (e) {
+          this.logger.warn(`文档评论积分发放失败: ${(e as Error).message}`);
+        }
+      }
+    }
   }
 
   /** 更新评论（仅限管理员），只允许更新内容和状态。 */

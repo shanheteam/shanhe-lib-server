@@ -35,6 +35,7 @@ import { Sms } from './sms.entity';
 import { UserVip } from './user-vip.entity';
 import { UserOauth } from './user-oauth.entity';
 import { UcCreditConsume } from './uc-credit-consume.entity';
+import { CreditLog, CreditLogType } from './credit-log.entity';
 
 export const entities = [
   User,
@@ -75,6 +76,7 @@ export const entities = [
   UserVip,
   UserOauth,
   UcCreditConsume,
+  CreditLog,
 ];
 
 export {
@@ -116,4 +118,6 @@ export {
   UserVip,
   UserOauth,
   UcCreditConsume,
+  CreditLog,
+  CreditLogType,
 };

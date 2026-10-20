@@ -18,6 +18,7 @@ import {
   DownloadCode,
   Group,
   UserGroup,
+  CreditLogType,
 } from '../../entities';
 import { ConfigService } from '../../config/config.service';
 import { ConverterService } from '../converter/converter.service';
@@ -33,6 +34,7 @@ import {
 } from './document.constant';
 import { ConversionWorkerService } from './split/conversion-worker.service';
 import { DownloadService } from './split/download.service';
+import { CreditService } from '../credit/credit.service';
 
 const ORDER_COLUMNS = [
   'id',
@@ -116,6 +118,7 @@ export class DocumentService implements OnModuleInit {
     private readonly ossService: OssService,
     private readonly jwtService: JwtService,
     private readonly dataSource: DataSource,
+    private readonly credit: CreditService,
   ) {
     this.conversionWorker = new ConversionWorkerService(
       this.docRepo,
@@ -489,6 +492,7 @@ export class DocumentService implements OnModuleInit {
     if (prepared.length === 0) throw Biz.invalidArgument('文档文件参数attachment_id不正确');
 
     const queryRunner = this.docRepo.manager.connection.createQueryRunner();
+    let created: Document[] = [];
     await queryRunner.connect();
     await queryRunner.startTransaction();
     try {
@@ -502,10 +506,11 @@ export class DocumentService implements OnModuleInit {
           .execute();
       }
 
-      const created = await queryRunner.manager.save(
+      const createdRows = await queryRunner.manager.save(
         Document,
         prepared.map((p) => p.doc),
       );
+      created = createdRows;
 
       const docCates: Partial<DocumentCategory>[] = [];
       for (const d of created) {
@@ -541,6 +546,26 @@ export class DocumentService implements OnModuleInit {
       throw e;
     } finally {
       await queryRunner.release();
+    }
+
+    // 上传文档奖励：按每日次数上限逐篇发放，发放失败不影响上传结果
+    const award = this.config.getInt('score', 'upload_document', 0);
+    const dailyLimit = this.config.getInt('score', 'upload_document_limit', 0);
+    if (award > 0 && dailyLimit > 0) {
+      for (const doc of created) {
+        try {
+          await this.credit.grantDaily(
+            userId,
+            CreditLogType.UploadDocument,
+            award,
+            dailyLimit,
+            '上传文档奖励',
+            Number(doc.id),
+          );
+        } catch (e) {
+          this.logger.warn(`上传文档积分发放失败: ${(e as Error).message}`);
+        }
+      }
     }
   }
 
@@ -639,6 +664,19 @@ export class DocumentService implements OnModuleInit {
         .set({ deleted_at: new Date(), deleted_user_id: userId })
         .where('id IN (:...ids)', { ids: targetIds })
         .execute();
+
+      // 删除自己上传的文档时扣除积分（管理员删除他人文档不扣）
+      const ownDocCount = docs.filter((doc) => Number(doc.user_id) === userId).length;
+      const deductPerDoc = this.config.getInt('score', 'delete_document', 0);
+      if (ownDocCount > 0 && deductPerDoc > 0) {
+        await this.credit.deduct(
+          queryRunner.manager,
+          userId,
+          CreditLogType.DeleteDocument,
+          deductPerDoc * ownDocCount,
+          '删除文档扣分',
+        );
+      }
       await queryRunner.commitTransaction();
     } catch (e) {
       await queryRunner.rollbackTransaction();

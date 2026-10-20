@@ -14,6 +14,7 @@ import {
 } from '../../entities';
 import { UserController } from './user.controller';
 import { UserService } from './user.service';
+import { CreditModule } from '../credit/credit.module';
 
 @Module({
   imports: [
@@ -29,6 +30,7 @@ import { UserService } from './user.service';
       EmailCode,
       Logout,
     ]),
+    CreditModule,
   ],
   controllers: [UserController],
   providers: [UserService],

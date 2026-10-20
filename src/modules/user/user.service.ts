@@ -12,6 +12,7 @@ import {
   Sign,
   EmailCode,
   Logout,
+  CreditLogType,
 } from '../../entities';
 import { Biz } from '../../common/biz.exception';
 import { checkPassword, makePassword, randomString } from '../../common/password.util';
@@ -23,6 +24,7 @@ import { CaptchaService } from '../captcha/captcha.service';
 import { MailService } from '../mail/mail.service';
 import { JwtUser } from '../../auth/jwt-user.type';
 import { ROOT_USER_ID } from '../../common/root-user.constant';
+import { CreditService } from '../credit/credit.service';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -121,6 +123,7 @@ export class UserService {
     private readonly permissionService: PermissionService,
     private readonly captcha: CaptchaService,
     private readonly mail: MailService,
+    private readonly credit: CreditService,
   ) {}
 
   // ---------- 工具方法 ----------
@@ -600,38 +603,36 @@ export class UserService {
 
     const award = this.config.getInt('score', 'sign_in', 0);
     const now = new Date();
-    const sign = await this.signRepo.save(
-      this.signRepo.create({
-        user_id: user.userId,
-        ip: ip || '',
-        sign_at: this.todaySignAt(),
-        award,
-        created_at: now,
-        updated_at: now,
-      }),
-    );
+    return this.signRepo.manager.transaction(async (manager) => {
+      const sign = await manager.save(
+        manager.create(Sign, {
+          user_id: user.userId,
+          ip: ip || '',
+          sign_at: this.todaySignAt(),
+          award,
+          created_at: now,
+          updated_at: now,
+        }),
+      );
 
-    if (award > 0) {
-      await this.userRepo.createQueryBuilder()
-        .update(User)
-        .set({ credit_count: () => `credit_count + ${award}` })
-        .where('id = :id', { id: user.userId })
-        .execute();
-    }
+      if (award > 0) {
+        await this.credit.grant(manager, user.userId, CreditLogType.SignIn, award, '每日签到奖励');
+      }
 
-    const content =
-      award > 0 ? `签到成功，获得 ${award} ${this.config.getCreditName()}奖励` : '完成了每日签到';
-    await this.dynamicRepo.save(
-      this.dynamicRepo.create({
-        user_id: user.userId,
-        type: DYNAMIC_TYPE_SIGN,
-        content,
-        created_at: now,
-        updated_at: now,
-      }),
-    );
+      const content =
+        award > 0 ? `签到成功，获得 ${award} ${this.config.getCreditName()}奖励` : '完成了每日签到';
+      await manager.save(
+        manager.create(Dynamic, {
+          user_id: user.userId,
+          type: DYNAMIC_TYPE_SIGN,
+          content,
+          created_at: now,
+          updated_at: now,
+        }),
+      );
 
-    return sign;
+      return sign;
+    });
   }
 
   async listUserDownload(user: JwtUser, page = 1, size = 10): Promise<{ total: number; download: Download[] }> {

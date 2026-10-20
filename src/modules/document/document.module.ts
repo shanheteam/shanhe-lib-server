@@ -20,6 +20,7 @@ import { ConverterModule } from '../converter/converter.module';
 import { AttachmentModule } from '../attachment/attachment.module';
 import { DocumentService } from './document.service';
 import { DocumentController } from './document.controller';
+import { CreditModule } from '../credit/credit.module';
 
 @Module({
   imports: [
@@ -41,6 +42,7 @@ import { DocumentController } from './document.controller';
     JwtModule.register({}),
     ConverterModule,
     AttachmentModule,
+    CreditModule,
   ],
   controllers: [DocumentController],
   providers: [DocumentService],

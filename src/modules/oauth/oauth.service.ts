@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { User, UserGroup, Group, UserOauth, UcCreditConsume } from '../../entities';
+import { User, UserGroup, Group, UserOauth, UcCreditConsume, CreditLogType } from '../../entities';
 import { ConfigService } from '../../config/config.service';
 import { JwtService } from '@nestjs/jwt';
 import { Request } from 'express';
@@ -12,6 +12,7 @@ import { Biz, BizException } from '../../common/biz.exception';
 import { makePassword, randomString } from '../../common/password.util';
 import { buildUserJson, getUserGroupIds } from '../../common/user.util';
 import { UcClientService } from './split/uc-client.service';
+import { CreditService } from '../credit/credit.service';
 
 // OAuth type constants (aligned with frontend enum)
 const OAUTH_TYPE_CUSTOM = 6;
@@ -74,6 +75,7 @@ export class OauthService {
     private readonly jwtService: JwtService,
     private readonly jwks: JwksService,
     private readonly discovery: OidcDiscoveryService,
+    private readonly credit: CreditService,
   ) {
     this.ucClient = new UcClientService(this.config, this.jwks, this.discovery);
   }
@@ -545,6 +547,7 @@ export class OauthService {
     const now = new Date();
     const randomPassword = await makePassword(randomString(16));
     const randomEmail = email || `${openid}@oauth.local`;
+    const registerCredit = Math.max(0, this.config.getInt('score', 'register', 0));
 
     const newUser = await this.userRepo.save(
       this.userRepo.create({
@@ -554,6 +557,7 @@ export class OauthService {
         student_id: student_id || '',
         mobile: mobile || '',
         realname: nickname,
+        credit_count: registerCredit,
         login_at: now,
         last_login_ip: clientIp,
         register_ip: clientIp,
@@ -561,6 +565,21 @@ export class OauthService {
         updated_at: now,
       }),
     ) as User;
+
+    // 注册奖励流水（余额已在创建时写入，这里只补审计记录，失败不影响登录）
+    if (registerCredit > 0) {
+      try {
+        await this.credit.record(
+          Number(newUser.id),
+          CreditLogType.Register,
+          registerCredit,
+          registerCredit,
+          '注册奖励',
+        );
+      } catch (e) {
+        this.logger.warn(`写入注册积分流水失败: ${(e as Error).message}`);
+      }
+    }
 
     // Create OAuth binding
     await this.userOauthRepo.save(

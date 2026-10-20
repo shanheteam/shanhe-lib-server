@@ -11,6 +11,7 @@ import {
 } from '../../entities';
 import { CommentController } from './comment.controller';
 import { CommentService } from './comment.service';
+import { CreditModule } from '../credit/credit.module';
 
 @Module({
   imports: [
@@ -23,6 +24,7 @@ import { CommentService } from './comment.service';
       UserGroup,
       Punishment,
     ]),
+    CreditModule,
   ],
   controllers: [CommentController],
   providers: [CommentService],

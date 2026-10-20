@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { EntityManager, In, Repository } from 'typeorm';
 import {
@@ -7,7 +7,10 @@ import {
   Favorite,
   Punishment,
   User,
+  CreditLogType,
 } from '../../entities';
+import { ConfigService } from '../../config/config.service';
+import { CreditService } from '../credit/credit.service';
 import { Biz } from '../../common/biz.exception';
 import { isUserInPunishing } from '../../common/punishment.util';
 
@@ -20,6 +23,8 @@ const PUNISHMENT_FAVORITE_LIMITED = 5;
 
 @Injectable()
 export class FavoriteService {
+  private readonly logger = new Logger(FavoriteService.name);
+
   constructor(
     @InjectRepository(Favorite)
     private readonly favoriteRepo: Repository<Favorite>,
@@ -31,6 +36,8 @@ export class FavoriteService {
     private readonly userRepo: Repository<User>,
     @InjectRepository(Punishment)
     private readonly punishmentRepo: Repository<Punishment>,
+    private readonly config: ConfigService,
+    private readonly credit: CreditService,
   ) {}
 
   async createFavorite(
@@ -78,6 +85,29 @@ export class FavoriteService {
         return saved;
       },
     );
+
+    // 文档被收藏奖励：发放给文档作者，跳过自己收藏自己的文档
+    if (type !== FAVORITE_TYPE_ARTICLE) {
+      const doc = await this.documentRepo.findOne({
+        where: { id: documentId },
+        select: { id: true, user_id: true },
+      });
+      const authorId = Number(doc?.user_id) || 0;
+      if (authorId > 0 && authorId !== userId) {
+        try {
+          await this.credit.grantDaily(
+            authorId,
+            CreditLogType.DocumentCollected,
+            this.config.getInt('score', 'document_collected', 0),
+            this.config.getInt('score', 'document_collected_limit', 0),
+            '文档被收藏奖励',
+            documentId,
+          );
+        } catch (e) {
+          this.logger.warn(`文档收藏积分发放失败: ${(e as Error).message}`);
+        }
+      }
+    }
 
     return this.serialize(favorite, {});
   }
