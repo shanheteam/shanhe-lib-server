@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { EntityManager, Repository } from 'typeorm';
+import { EntityManager, In, Repository } from 'typeorm';
 import {
   Article,
   Comment,
@@ -294,7 +294,7 @@ export class CommentService {
     const users = userIds.length
       ? await this.userRepo.find({
           select: { id: true, avatar: true, realname: true, identity: true },
-          where: { id: userIds as any },
+          where: { id: In(userIds) },
         })
       : [];
     const userMap = new Map(users.map((u) => [u.id, u]));
@@ -305,11 +305,11 @@ export class CommentService {
     const titleMap = new Map<number, { title: string; uuid: string }>();
     if (withTitle) {
       if (docIds.length) {
-        const docs = await this.documentRepo.find({ where: { id: [...new Set(docIds)] as any } });
+        const docs = await this.documentRepo.find({ where: { id: In([...new Set(docIds)]) } });
         for (const d of docs) titleMap.set(Number(d.id), { title: d.title, uuid: d.uuid });
       }
       if (articleIds.length) {
-        const articles = await this.articleRepo.find({ where: { id: [...new Set(articleIds)] as any } });
+        const articles = await this.articleRepo.find({ where: { id: In([...new Set(articleIds)]) } });
         for (const a of articles) titleMap.set(Number(a.id), { title: a.title, uuid: a.identifier });
       }
     }

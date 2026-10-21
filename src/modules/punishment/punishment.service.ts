@@ -108,7 +108,7 @@ export class PunishmentService {
       // 只取用到的列（下方仅用 realname），避免把 password 哈希等无关列拉进内存
       const users = await this.userRepo.find({
         select: { id: true, realname: true },
-        where: { id: displayUserIds as any },
+        where: { id: In(displayUserIds) },
       });
       for (const u of users) userMap.set(Number(u.id), u);
     }

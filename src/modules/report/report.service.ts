@@ -83,7 +83,7 @@ export class ReportService {
       // 只取用到的列（下方仅用 uuid），避免把 description/content 等长文本列拉进内存
       const docs = await this.documentRepo.find({
         select: { id: true, uuid: true },
-        where: { id: docIds as any },
+        where: { id: In(docIds) },
       });
       for (const d of docs) uuidMap.set(Number(d.id), d.uuid);
     }

@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { IsNull, Repository } from 'typeorm';
+import { In, IsNull, Repository } from 'typeorm';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '../../config/config.service';
 import {
@@ -502,7 +502,7 @@ export class AttachmentService {
     const users = idSet.length
       ? await this.userRepo.find({
           select: { id: true, realname: true, email: true },
-          where: { id: idSet as any },
+          where: { id: In(idSet) },
         })
       : [];
     const nameMap = new Map(users.map((u) => [u.id, u.realname || u.email]));
