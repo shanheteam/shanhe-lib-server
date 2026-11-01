@@ -24,7 +24,12 @@ import { ConfigService } from '../../config/config.service';
 import { ConverterService } from '../converter/converter.service';
 import { OssService } from '../attachment/oss.service';
 import { Biz } from '../../common/biz.exception';
-import { asArray, positiveNumberArray, toBoolArray } from '../../common/query.util';
+import {
+  asArray,
+  nonNegativeNumberArray,
+  positiveNumberArray,
+  toBoolArray,
+} from '../../common/query.util';
 import { sanitizeHttpUrl } from '../../common/url.util';
 import { tb } from '../../database/naming-strategy';
 import {
@@ -140,7 +145,9 @@ export class DocumentService implements OnModuleInit {
     );
   }
 
-  onModuleInit() {
+  async onModuleInit() {
+    // 先把上次进程遗留的「转换中」文档重新入队，再启动轮询，避免它们永久卡住
+    await this.conversionWorker.recoverInterrupted();
     // 后台转换轮询 worker，间隔 5 秒处理一个待转换文档
     this.timer = setInterval(() => {
       void this.conversionWorker.tick();
@@ -701,7 +708,7 @@ export class DocumentService implements OnModuleInit {
 
     const categoryIds = positiveNumberArray(params.category_id);
     const requestUserIds = positiveNumberArray(params.user_id);
-    const requestStatuses = positiveNumberArray(params.status);
+    const requestStatuses = nonNegativeNumberArray(params.status);
     const recommendArr = toBoolArray(params.is_recommend);
     const languages = asArray(params.language)
       .map((l) => String(l).trim())
@@ -1114,7 +1121,7 @@ export class DocumentService implements OnModuleInit {
     const size = Number(params.size) || 24;
     const categoryIds = positiveNumberArray(params.category_id);
     const userIdIds = positiveNumberArray(params.user_id);
-    const statuses = positiveNumberArray(params.status);
+    const statuses = nonNegativeNumberArray(params.status);
 
     const { docs, total } = await this.queryDocuments({
       page,

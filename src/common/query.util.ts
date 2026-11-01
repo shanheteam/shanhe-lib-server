@@ -19,9 +19,14 @@ export function toBoolArray(value: unknown): boolean[] {
   return asArray(value).map((v) => v === 'true' || v === '1');
 }
 
-/** 数组转正数数组（过滤非正数与 NaN），用于分类/状态等 ID 多选参数 */
+/** 数组转正数数组（过滤非正数与 NaN），用于分类/用户等 ID 多选参数 */
 export function positiveNumberArray(value: unknown): number[] {
   return toNumberArray(value).filter((n) => n > 0);
+}
+
+/** 数组转非负整数数组（0 合法），用于状态这类从 0 开始的枚举多选参数 */
+export function nonNegativeNumberArray(value: unknown): number[] {
+  return toNumberArray(value).filter((n) => Number.isInteger(n) && n >= 0);
 }
 
 /** 数组去重（过滤非正数） */

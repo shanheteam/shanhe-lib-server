@@ -63,6 +63,11 @@ async function bootstrap() {
       credentials: true,
       methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
       allowedHeaders: ['Content-Type', 'Authorization'],
+      // 预检结果由浏览器缓存：未设置时 Chrome 仅缓存 5 秒，SPA 每次路由跳转都会重新发 OPTIONS。
+      // 预检走的是 CDN/网关链路，任何一次网关抖动（源站重启、限流、节点异常）都会返回不带
+      // Access-Control-Allow-Origin 的错误页，前端就报"跨域失败"。缓存 2 小时（Chrome 上限）
+      // 可把预检频率从"每次跳转"降到"每 2 小时一次"，显著降低这类偶发报错。
+      maxAge: 7200,
     });
   } else {
     // 未配置 CORS_ORIGIN：允许所有来源，但必须关闭凭据（Cookie）。

@@ -56,6 +56,30 @@ export class ConversionWorkerService {
     }
   }
 
+  /**
+   * 进程启动时回收上次遗留的「转换中」文档。
+   *
+   * 转换开始即把状态置为 1（见 handleDocument），而扫描队列只认 0/5。若转换期间进程被重启、
+   * 崩溃或 OOM，这条记录会永远停在「转换中」，后台也没有入口把它改回待转换。
+   * 本进程刚启动，不可能存在在途转换，因此可直接重新入队。
+   */
+  async recoverInterrupted(): Promise<void> {
+    try {
+      const res = await this.docRepo
+        .createQueryBuilder()
+        .update(Document)
+        .set({ status: DocumentStatus.Pending })
+        .where('status = :status', { status: DocumentStatus.Converting })
+        .execute();
+      const count = Number(res.affected || 0);
+      if (count > 0) {
+        this.log.log(`启动回收：${count} 篇处于「转换中」的文档已重新入队`);
+      }
+    } catch (e) {
+      this.log.error(`启动回收「转换中」文档失败：${(e as Error).message}`);
+    }
+  }
+
   /** 按空转退避节奏执行存量迁移扫描：有进展立即恢复每 tick 扫描，连续空扫则逐步拉长间隔。 */
   private async maybeMigrateNextDocument(): Promise<void> {
     if (Date.now() < this.migrateNextScanAt) return;
